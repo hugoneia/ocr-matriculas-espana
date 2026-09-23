@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Linking, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -25,6 +25,8 @@ interface ScannedPlate {
   plate: string;
   date: string;
   time: string;
+  latitude: string;
+  longitude: string;
 }
 
 function normalizeImportedPlates(rawValue: string | null): Record<string, ImportedPlateData> {
@@ -86,9 +88,18 @@ export default function RegistrosScreen() {
         .filter(Boolean)
         .slice(1)
         .map((line) => {
-          const [rawPlate = '', rawDate = '', rawTime = ''] = line.split(',');
+          const match = line.match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"$/);
+          if (!match) return null;
+
+          const [, rawPlate = '', rawDate = '', rawTime = '', rawCoordinates = ''] = match;
+          const [rawLatitude = '', rawLongitude = ''] = rawCoordinates.split(',');
           const plate = rawPlate.trim().toUpperCase();
-          return plate ? { plate, date: rawDate.trim(), time: rawTime.trim() } : null;
+          const latitude = rawLatitude.trim();
+          const longitude = rawLongitude.trim();
+
+          return plate && latitude && longitude
+            ? { plate, date: rawDate.trim(), time: rawTime.trim(), latitude, longitude }
+            : null;
         })
         .filter((item): item is ScannedPlate => item !== null)
         .filter((item) => item.plate in importedStore)
@@ -97,6 +108,29 @@ export default function RegistrosScreen() {
       setScannedPlates(platesData);
     } catch (error) {
       console.error('Error loading scanned plates:', error);
+    }
+  };
+
+  const openPlateLocation = async (plate: ScannedPlate) => {
+    try {
+      const plateLabel = plate.plate || 'Vehículo';
+      const scheme = Platform.OS === 'ios' ? 'maps:0,0?q=' : 'geo:0,0?q=';
+      const latLng = `${plate.latitude},${plate.longitude}`;
+
+      const url = Platform.select({
+        ios: `${scheme}${plateLabel}@${latLng}&z=20`,
+        android: `${scheme}${latLng}(${plateLabel})?z=20`,
+      });
+
+      if (url) {
+        await Linking.openURL(url);
+      }
+    } catch (error) {
+      console.error('Error al abrir mapa:', error);
+      Alert.alert(
+        'Error',
+        'Ocurrió un error al intentar abrir el mapa',
+      );
     }
   };
 
@@ -249,7 +283,9 @@ export default function RegistrosScreen() {
               renderItem={({ item }) => (
                 <View style={styles.plateItem}>
                   <View>
-                    <Text style={styles.plateText}>{item.plate}</Text>
+                    <TouchableOpacity onPress={() => void openPlateLocation(item)}>
+                      <Text style={styles.plateText}>{item.plate}</Text>
+                    </TouchableOpacity>
                     <Text style={styles.plateSubText}>{item.date} {item.time}</Text>
                   </View>
                   <MaterialIcons name="check-circle" size={22} color="#FF3B30" />

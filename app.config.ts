@@ -126,6 +126,14 @@ const config: ExpoConfig = {
       },
     ],
     [
+      "expo-media-library",
+      {
+        photosPermission: "Necesitamos acceso a tus fotos para guardar las fotografías de matrículas.",
+        savePhotosPermission: "Necesitamos permiso para guardar las fotografías de matrículas.",
+        granularPermissions: ["photo"],
+      },
+    ],
+    [
       "expo-build-properties",
       {
         android: {

@@ -5,6 +5,7 @@ import { File, Paths } from 'expo-file-system';
 import TextRecognition from '@react-native-ml-kit/text-recognition';
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
+import * as MediaLibrary from 'expo-media-library';
 import Constants from 'expo-constants';
 import { useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -121,7 +122,8 @@ function isFreshAccurateLocation(location: Location.LocationObject | null): loca
 }
 
 export default function HomeScreen() {
-  const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
+  const [hasInitialPermissions, setHasInitialPermissions] = useState<boolean | null>(null);
+  const [initialPermissionError, setInitialPermissionError] = useState<string | null>(null);
   const [scannedPlates, setScannedPlates] = useState<ScannedPlateItem[]>([]);
   const [cameraReady, setCameraReady] = useState(false);
   const [frameColor, setFrameColor] = useState<'blue' | 'red'>('blue');
@@ -393,6 +395,11 @@ customToastTimeoutRef.current = setTimeout(() => setCustomToast(null), duration)
     }
   };
 
+  const clearScannedPlates = async () => {
+    await AsyncStorage.removeItem(ALL_DETECTIONS_STORAGE_KEY);
+    setScannedPlates([]);
+  };
+
 const saveDetectionForMainList = async (plate: string) => {
 const entries = await readAllDetectedPlates();
 const now = Date.now();
@@ -479,7 +486,7 @@ return;
       const rule = notificationRulesRef.current[detectedPlate];
       const hasCustomAlert = Boolean(globalNotificationsRef.current && rule?.active && rule.message);
       const showCustomAlert = (locationSaved = false) => {
-        const suffix = locationSaved ? '\n📍 Ubicación guardada' : '';
+        const suffix = locationSaved ? '' : '';
         showCustomToast(`🔔 ${rule?.message}${suffix}`);
       };
 
@@ -502,7 +509,7 @@ const location = await getFreshLocationForRegistration();
 
       await saveMatchedPlateWithLocation(detectedPlate, location);
 
-      showStandardToast(`¡${detectedPlate} está en el registro!\n📍 Ubicación guardada`, 'warning');
+      showStandardToast(`¡${detectedPlate} está en el registro!`, 'warning');
       if (hasCustomAlert) {
         showCustomAlert(true);
       }
@@ -515,10 +522,60 @@ console.error('Error during scan:', error);
   };
 
   useEffect(() => {
+    let cancelled = false;
+
     void (async () => {
-      const { status } = await Camera.requestCameraPermissionsAsync();
-      setHasCameraPermission(status === 'granted');
+      try {
+        const cameraPermission = await Camera.requestCameraPermissionsAsync();
+
+        if (cameraPermission.status !== 'granted') {
+          if (!cancelled) {
+            setInitialPermissionError('Acceso a la cámara denegado.');
+            setHasInitialPermissions(false);
+          }
+          return;
+        }
+
+        let locationPermission = await Location.getForegroundPermissionsAsync();
+        if (locationPermission.status !== 'granted') {
+          locationPermission = await Location.requestForegroundPermissionsAsync();
+        }
+
+        if (locationPermission.status !== 'granted') {
+          if (!cancelled) {
+            setInitialPermissionError('Acceso a la ubicación denegado.');
+            setHasInitialPermissions(false);
+          }
+          return;
+        }
+
+        const mediaPermission = await MediaLibrary.requestPermissionsAsync(true, ['photo']);
+
+        if (mediaPermission.status !== 'granted') {
+          if (!cancelled) {
+            setInitialPermissionError('Permiso para guardar fotografías denegado.');
+            setHasInitialPermissions(false);
+          }
+          return;
+        }
+
+        if (!cancelled) {
+          setHasInitialPermissions(true);
+          setInitialPermissionError(null);
+        }
+      } catch (error) {
+        console.error('Error solicitando permisos iniciales:', error);
+
+        if (!cancelled) {
+          setInitialPermissionError('No se pudieron solicitar los permisos iniciales.');
+          setHasInitialPermissions(false);
+        }
+      }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -656,12 +713,22 @@ void loadImportedPlates();
     }
   };
 
-  if (hasCameraPermission === null) {
-    return <ScreenContainer className="flex-1 items-center justify-center"><Text>Solicitando permiso de cámara...</Text></ScreenContainer>;
+  if (hasInitialPermissions === null) {
+    return (
+      <ScreenContainer className="flex-1 items-center justify-center">
+        <Text>Solicitando permisos iniciales...</Text>
+      </ScreenContainer>
+    );
   }
 
-  if (hasCameraPermission === false) {
-    return <ScreenContainer className="flex-1 items-center justify-center"><Text>Acceso a la cámara denegado.</Text></ScreenContainer>;
+  if (hasInitialPermissions === false) {
+    return (
+      <ScreenContainer className="flex-1 items-center justify-center p-6">
+        <Text className="text-center">
+          {initialPermissionError ?? 'Faltan permisos necesarios para iniciar la aplicación.'}
+        </Text>
+      </ScreenContainer>
+    );
   }
 
   const gpsPresentation = getGpsPresentation();
@@ -739,7 +806,7 @@ void loadImportedPlates();
             <View style={styles.platesHeader}>
               <Text style={styles.platesTitle}>Matrículas Detectadas:</Text>
               {scannedPlates.length > 0 && (
-                <TouchableOpacity onPress={() => setScannedPlates([])} style={styles.clearCircleButton}>
+                <TouchableOpacity onPress={() => void clearScannedPlates()} style={styles.clearCircleButton}>
                   <MaterialIcons name="close" size={16} color="white" />
                 </TouchableOpacity>
               )}
