@@ -1,0 +1,18 @@
+workflows:
+  react-native-android:
+    name: React Native Android Build
+    max_build_duration: 45
+    instance_type: mac_mini_m1
+    environment:
+      node: 20.x
+      java: 17
+    scripts:
+      - name: Instalar dependencias
+        script: |
+          npm install
+      - name: Generar APK de Android
+        script: |
+          cd android
+          ./gradlew assembleRelease
+    artifacts:
+      - android/app/build/outputs/apk/release/*.apk
