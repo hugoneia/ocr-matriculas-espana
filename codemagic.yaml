@@ -10,6 +10,9 @@ workflows:
       - name: Instalar dependencias
         script: |
           npm install
+      - name: Generar proyecto Android
+        script: |
+          npx expo prebuild --platform android
       - name: Generar APK de Android
         script: |
           cd android
