@@ -7,9 +7,14 @@ workflows:
       node: 20
       java: 17
     scripts:
+      - name: Instalar pnpm
+        script: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+
       - name: Instalar dependencias
         script: |
-          npm install
+          pnpm install --frozen-lockfile
 
       - name: Diagnosticar expo-asset y expo-audio
         script: |
