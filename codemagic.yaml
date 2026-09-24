@@ -10,6 +10,33 @@ workflows:
       - name: Instalar dependencias
         script: |
           npm install
+      - name: Diagnostico dependencias Expo
+        script: |
+          echo "===== VERSIONES EXPO ====="
+          npm ls expo expo-modules-core expo-asset expo-router expo-camera expo-location expo-media-library --all || true
+
+          echo
+          echo "===== PACKAGE.JSON INSTALADOS ====="
+          node - <<'NODE'
+          const packages = [
+            "expo",
+            "expo-modules-core",
+            "expo-asset",
+            "expo-router",
+            "expo-camera",
+            "expo-location",
+            "expo-media-library"
+          ];
+
+          for (const name of packages) {
+            try {
+              const pkg = require(`${name}/package.json`);
+              console.log(`${name}: ${pkg.version}`);
+            } catch (e) {
+              console.log(`${name}: NO DISPONIBLE`);
+            }
+          }
+          NODE
       - name: Generar proyecto Android
         script: |
           npx expo prebuild --platform android
