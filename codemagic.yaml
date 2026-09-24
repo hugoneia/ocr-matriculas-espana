@@ -13,6 +13,9 @@ workflows:
       - name: Generar proyecto Android
         script: |
           npx expo prebuild --platform android
+      - name: Comprobar bundle JavaScript
+        script: |
+          NODE_ENV=production npx expo export --platform android
       - name: Generar APK de Android
         script: |
           cd android
