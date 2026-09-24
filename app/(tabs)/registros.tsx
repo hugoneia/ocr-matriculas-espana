@@ -29,6 +29,80 @@ interface ScannedPlate {
   longitude: string;
 }
 
+interface StoredDetection {
+  plate: string;
+  timestamp?: number;
+}
+
+function parseStoredDetections(rawValue: string | null): StoredDetection[] {
+  if (!rawValue) return [];
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.reduce<StoredDetection[]>((entries, entry) => {
+      const plate = typeof entry === 'string' ? entry : entry?.plate;
+      const timestamp =
+        typeof entry === 'object' && typeof entry?.timestamp === 'number'
+          ? entry.timestamp
+          : undefined;
+
+      if (typeof plate === 'string' && plate.trim()) {
+        entries.push({
+          plate: plate.trim().toUpperCase(),
+          timestamp,
+        });
+      }
+
+      return entries;
+    }, []);
+  } catch (error) {
+    console.error('Error parsing stored detections:', error);
+    return [];
+  }
+}
+
+function parseSpanishDateTimeToTimestamp(date: string, time: string): number | null {
+  const dateParts = date.split('/').map(Number);
+  const timeParts = time.split(':').map(Number);
+
+  if (
+    dateParts.length !== 3 ||
+    timeParts.length < 2 ||
+    dateParts.some(Number.isNaN) ||
+    timeParts.some(Number.isNaN)
+  ) {
+    return null;
+  }
+
+  const [day, month, year] = dateParts;
+  const [hour, minute, second = 0] = timeParts;
+
+  const parsed = new Date(
+    year,
+    month - 1,
+    day,
+    hour,
+    minute,
+    second,
+  );
+
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day ||
+    parsed.getHours() !== hour ||
+    parsed.getMinutes() !== minute ||
+    parsed.getSeconds() !== second
+  ) {
+    return null;
+  }
+
+  return parsed.getTime();
+}
+
 function normalizeImportedPlates(rawValue: string | null): Record<string, ImportedPlateData> {
   if (!rawValue) return {};
 
@@ -212,6 +286,178 @@ export default function RegistrosScreen() {
     ]);
   };
 
+  const handleDeleteOCRRecord = (item: ScannedPlate) => {
+    Alert.alert(
+      'Eliminar registro',
+      `¿Eliminar la detección de ${item.plate} del ${item.date} a las ${item.time}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const platesFile = getPlatesFile();
+
+              if (!(await platesFile.info()).exists) {
+                Alert.alert('Error', 'No se encontró el archivo de registros.');
+                return;
+              }
+
+              // --------------------------------------------------------
+              // Localizar exactamente la línea correspondiente del CSV.
+              // Se comprueban matrícula + fecha + hora + coordenadas.
+              // --------------------------------------------------------
+              const rawFile = await platesFile.text();
+              const lines = rawFile
+                .replace(/^\uFEFF/, '')
+                .replace(/\r\n/g, '\n')
+                .split('\n');
+
+              const header = lines[0] ?? '';
+              const dataLines = lines.slice(1).filter((line) => line.trim() !== '');
+
+              const targetIndex = dataLines.findIndex((line) => {
+                const match = line.match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"$/);
+                if (!match) return false;
+
+                const [, rawPlate = '', rawDate = '', rawTime = '', rawCoordinates = ''] = match;
+                const [rawLatitude = '', rawLongitude = ''] = rawCoordinates.split(',');
+
+                return (
+                  rawPlate.trim().toUpperCase() === item.plate &&
+                  rawDate.trim() === item.date &&
+                  rawTime.trim() === item.time &&
+                  rawLatitude.trim() === item.latitude &&
+                  rawLongitude.trim() === item.longitude
+                );
+              });
+
+              if (targetIndex === -1) {
+                Alert.alert(
+                  'Error',
+                  'No se encontró exactamente ese registro en el archivo de historial.',
+                );
+                return;
+              }
+
+              // --------------------------------------------------------
+              // Buscar la detección correspondiente en AsyncStorage.
+              //
+              // La hora del CSV puede ser posterior a la hora del OCR
+              // porque entre ambas operaciones se obtiene el GPS.
+              // Por eso se busca la detección de la misma matrícula cuyo
+              // timestamp sea el más cercano, con un máximo de 5 minutos.
+              // --------------------------------------------------------
+              const rawDetections = await AsyncStorage.getItem(
+                ALL_DETECTIONS_STORAGE_KEY,
+              );
+
+              if (rawDetections === null) {
+                Alert.alert(
+                  'Error',
+                  'No se encontró el almacenamiento de detecciones. No se ha eliminado el registro.',
+                );
+                return;
+              }
+
+              const detections = parseStoredDetections(rawDetections);
+              const targetTimestamp = parseSpanishDateTimeToTimestamp(
+                item.date,
+                item.time,
+              );
+
+              let detectionIndex = -1;
+              let closestDifference = Number.POSITIVE_INFINITY;
+
+              if (targetTimestamp !== null) {
+                detections.forEach((detection, index) => {
+                  if (
+                    detection.plate !== item.plate ||
+                    typeof detection.timestamp !== 'number'
+                  ) {
+                    return;
+                  }
+
+                  const difference = Math.abs(
+                    detection.timestamp - targetTimestamp,
+                  );
+
+                  if (
+                    difference <= 5 * 60 * 1000 &&
+                    difference < closestDifference
+                  ) {
+                    closestDifference = difference;
+                    detectionIndex = index;
+                  }
+                });
+              }
+
+              // Para datos antiguos sin timestamp solo permitimos el borrado
+              // si existe exactamente una detección de esa matrícula.
+              if (detectionIndex === -1) {
+                const samePlateIndexes = detections
+                  .map((detection, index) => ({ detection, index }))
+                  .filter(({ detection }) => detection.plate === item.plate)
+                  .map(({ index }) => index);
+
+                const indexesWithoutTimestamp = samePlateIndexes.filter(
+                  (index) => typeof detections[index]?.timestamp !== 'number',
+                );
+
+                if (indexesWithoutTimestamp.length === 1 && samePlateIndexes.length === 1) {
+                  detectionIndex = indexesWithoutTimestamp[0];
+                }
+              }
+
+              if (detectionIndex === -1) {
+                Alert.alert(
+                  'Error',
+                  'No se pudo asociar de forma segura este registro con la detección almacenada. No se ha eliminado nada.',
+                );
+                return;
+              }
+
+              // --------------------------------------------------------
+              // Actualizar primero AsyncStorage.
+              // --------------------------------------------------------
+              detections.splice(detectionIndex, 1);
+
+              await AsyncStorage.setItem(
+                ALL_DETECTIONS_STORAGE_KEY,
+                JSON.stringify(detections),
+              );
+
+              // --------------------------------------------------------
+              // Después eliminar exactamente esa línea del CSV.
+              // --------------------------------------------------------
+              dataLines.splice(targetIndex, 1);
+
+              if (dataLines.length === 0) {
+                await platesFile.delete();
+              } else {
+                await platesFile.write(
+                  `${[header, ...dataLines].join('\n')}\n`,
+                );
+              }
+
+              // Recargar el historial desde el CSV.
+              await loadScannedPlates();
+
+              Alert.alert('Completado', 'Registro eliminado correctamente.');
+            } catch (error) {
+              console.error('Error deleting OCR record:', error);
+              Alert.alert(
+                'Error',
+                'No se pudo eliminar el registro. No se han realizado más cambios.',
+              );
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const handleExportRecords = async () => {
     try {
       const platesFile = getPlatesFile();
@@ -288,7 +534,14 @@ export default function RegistrosScreen() {
                     </TouchableOpacity>
                     <Text style={styles.plateSubText}>{item.date} {item.time}</Text>
                   </View>
-                  <MaterialIcons name="check-circle" size={22} color="#FF3B30" />
+                  <TouchableOpacity
+                    onPress={() => handleDeleteOCRRecord(item)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Eliminar registro ${item.plate}`}
+                    hitSlop={8}
+                  >
+                    <MaterialIcons name="close" size={22} color="#FF3B30" />
+                  </TouchableOpacity>
                 </View>
               )}
             />

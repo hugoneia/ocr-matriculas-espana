@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, AppStateStatus, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { AppState, AppStateStatus, Image, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { captureRef } from 'react-native-view-shot';
 import { Camera, CameraView } from 'expo-camera';
 import { File, Paths } from 'expo-file-system';
 import TextRecognition from '@react-native-ml-kit/text-recognition';
@@ -17,6 +18,7 @@ import { DEFAULT_SCANNER_SETTINGS, loadScannerSettings, type ScannerSettings } f
 const IMPORTED_PLATES_STORAGE_KEY = 'imported_plates';
 const NOTIFICATION_RULES_STORAGE_KEY = 'notification_rules';
 const GLOBAL_NOTIFICATIONS_KEY = 'global_notifications_active';
+const SAVE_DETECTION_IMAGE_STORAGE_KEY = 'save_detection_image';
 const ALL_DETECTIONS_STORAGE_KEY = 'all_scanned_plate_detections';
 const RECENT_REGISTRATIONS_STORAGE_KEY = 'recent_matched_plate_registrations';
 const INVALID_OCR_DEDUPLICATION_KEY = '__INVALID_OCR_RESULT__';
@@ -63,6 +65,17 @@ interface NotificationRule {
   plate: string;
   message: string;
   active: boolean;
+}
+
+interface DetectionEvidence {
+  photoUri: string;
+  photoWidth: number;
+  photoHeight: number;
+  standardMessage: string;
+  customMessage: string | null;
+  date: string;
+  time: string;
+  coordinates: string | null;
 }
 
 type ImportedPlateStore = Record<string, { fecha?: string; hora?: string }>;
@@ -139,8 +152,14 @@ export default function HomeScreen() {
   const [isScreenFocused, setIsScreenFocused] = useState(false);
   const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active');
   const [scannerSettings, setScannerSettings] = useState<ScannerSettings>(DEFAULT_SCANNER_SETTINGS);
+  const [detectionEvidence, setDetectionEvidence] = useState<DetectionEvidence | null>(null);
+  const [evidenceImageLoaded, setEvidenceImageLoaded] = useState(false);
 
   const cameraRef = useRef<CameraView>(null);
+  const evidenceViewRef = useRef<View>(null);
+  const evidenceCaptureInProgressRef = useRef(false);
+  const evidenceCaptureFrameRef = useRef<number | null>(null);
+  const saveDetectionImageRef = useRef(false);
   const standardToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const customToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const zoomIndexRef = useRef(0);
@@ -335,6 +354,61 @@ customToastTimeoutRef.current = setTimeout(() => setCustomToast(null), duration)
     setScannerSettings(settings);
   };
 
+  const loadSaveDetectionImageSetting = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(SAVE_DETECTION_IMAGE_STORAGE_KEY);
+      const enabled = stored === 'true';
+      saveDetectionImageRef.current = enabled;
+    } catch (error) {
+      console.error('Error loading image saving setting:', error);
+    }
+  };
+
+  const scheduleDetectionEvidence = async (
+    photoUri: string,
+    photoWidth: number,
+    photoHeight: number,
+    standardMessage: string,
+    customMessage: string | null,
+    location: Location.LocationObject | null,
+  ) => {
+    if (!saveDetectionImageRef.current || Platform.OS === 'web') return;
+
+    try {
+      const permission = await MediaLibrary.getPermissionsAsync(true, ['photo']);
+      let permissionGranted = permission.status === 'granted';
+
+      if (!permissionGranted) {
+        const requested = await MediaLibrary.requestPermissionsAsync(true, ['photo']);
+        permissionGranted = requested.status === 'granted';
+      }
+
+      if (!permissionGranted) {
+        console.warn('Permiso para guardar imágenes no concedido.');
+        return;
+      }
+
+      const now = new Date();
+      const coordinates = location
+        ? `${location.coords.latitude}, ${location.coords.longitude}`
+        : null;
+
+      setEvidenceImageLoaded(false);
+      setDetectionEvidence({
+        photoUri,
+        photoWidth,
+        photoHeight,
+        standardMessage,
+        customMessage,
+        date: now.toLocaleDateString('es-ES'),
+        time: now.toLocaleTimeString('es-ES', { hour12: false }),
+        coordinates,
+      });
+    } catch (error) {
+      console.error('Error preparando evidencia de detección:', error);
+    }
+  };
+
   const loadRecentDetections = async () => {
     try {
       const rawValue = await AsyncStorage.getItem(RECENT_REGISTRATIONS_STORAGE_KEY);
@@ -360,8 +434,12 @@ customToastTimeoutRef.current = setTimeout(() => setCustomToast(null), duration)
   };
 
   const readAllDetectedPlates = async (): Promise<StoredDetection[]> => {
-    const stored = parseStoredDetections(await AsyncStorage.getItem(ALL_DETECTIONS_STORAGE_KEY));
-    if (stored.length > 0) return stored;
+    const rawStored = await AsyncStorage.getItem(ALL_DETECTIONS_STORAGE_KEY);
+
+    // Si la clave existe, incluso aunque contenga [], respetamos ese estado.
+    // Esto permite que la X de la pantalla principal vacíe la lista sin
+    // que el CSV vuelva a rellenarla al recuperar el foco.
+    if (rawStored !== null) return parseStoredDetections(rawStored);
 
     try {
       const legacyFile = getMatchedPlatesFile();
@@ -396,7 +474,7 @@ customToastTimeoutRef.current = setTimeout(() => setCustomToast(null), duration)
   };
 
   const clearScannedPlates = async () => {
-    await AsyncStorage.removeItem(ALL_DETECTIONS_STORAGE_KEY);
+    await AsyncStorage.setItem(ALL_DETECTIONS_STORAGE_KEY, JSON.stringify([]));
     setScannedPlates([]);
   };
 
@@ -501,18 +579,28 @@ return;
       setTimeout(() => setFrameColor('blue'), 500);
 
 const location = await getFreshLocationForRegistration();
-      if (!location) {
-        showStandardToast(`${detectedPlate} está en el registro!`, 'warning');
-        if (hasCustomAlert) showCustomAlert();
-        return;
+
+      if (location) {
+        await saveMatchedPlateWithLocation(detectedPlate, location);
       }
 
-      await saveMatchedPlateWithLocation(detectedPlate, location);
+      const standardMessage = `¡${detectedPlate} está en el registro!`;
+      const customMessage = hasCustomAlert ? `🔔 ${rule?.message}` : null;
 
-      showStandardToast(`¡${detectedPlate} está en el registro!`, 'warning');
+      showStandardToast(standardMessage, 'warning');
+
       if (hasCustomAlert) {
-        showCustomAlert(true);
+        showCustomToast(customMessage!);
       }
+
+      void scheduleDetectionEvidence(
+        photo.uri,
+        photo.width,
+        photo.height,
+        standardMessage,
+        customMessage,
+        location,
+      );
 } catch (error) {
 console.error('Error during scan:', error);
       if (await registerNewDetection(INVALID_OCR_DEDUPLICATION_KEY)) showStandardToast('No se detectó matrícula válida', 'error');
@@ -520,6 +608,48 @@ console.error('Error during scan:', error);
       isProcessingRef.current = false;
     }
   };
+
+  useEffect(() => {
+    if (!detectionEvidence || !evidenceImageLoaded) return;
+    if (evidenceCaptureInProgressRef.current) return;
+
+    evidenceCaptureInProgressRef.current = true;
+
+    let firstFrame: number | null = null;
+    let secondFrame: number | null = null;
+
+    firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(async () => {
+        try {
+          if (!evidenceViewRef.current) return;
+
+          const capturedUri = await captureRef(evidenceViewRef.current, {
+            format: 'jpg',
+            quality: 0.92,
+            result: 'tmpfile',
+          });
+
+          await MediaLibrary.createAssetAsync(capturedUri);
+        } catch (error) {
+          console.error('Error guardando evidencia de detección:', error);
+        } finally {
+          setDetectionEvidence(null);
+          setEvidenceImageLoaded(false);
+          evidenceCaptureInProgressRef.current = false;
+          evidenceCaptureFrameRef.current = null;
+        }
+      });
+
+      evidenceCaptureFrameRef.current = secondFrame;
+    });
+
+    evidenceCaptureFrameRef.current = firstFrame;
+
+    return () => {
+      if (firstFrame !== null) cancelAnimationFrame(firstFrame);
+      if (secondFrame !== null) cancelAnimationFrame(secondFrame);
+    };
+  }, [detectionEvidence, evidenceImageLoaded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -544,16 +674,6 @@ console.error('Error during scan:', error);
         if (locationPermission.status !== 'granted') {
           if (!cancelled) {
             setInitialPermissionError('Acceso a la ubicación denegado.');
-            setHasInitialPermissions(false);
-          }
-          return;
-        }
-
-        const mediaPermission = await MediaLibrary.requestPermissionsAsync(true, ['photo']);
-
-        if (mediaPermission.status !== 'granted') {
-          if (!cancelled) {
-            setInitialPermissionError('Permiso para guardar fotografías denegado.');
             setHasInitialPermissions(false);
           }
           return;
@@ -637,6 +757,7 @@ console.error('Error during scan:', error);
       setIsScreenFocused(true);
 void loadNotificationSettings();
 void loadOperationalSettings();
+void loadSaveDetectionImageSetting();
       void loadRecentDetections();
 void loadImportedPlates();
       void loadScannedPlates();
@@ -821,11 +942,124 @@ void loadImportedPlates();
           </View>
         </View>
       </View>
+
+      {detectionEvidence && (
+        <View
+          ref={evidenceViewRef}
+          style={[
+            styles.evidenceCaptureContainer,
+            {
+              width: detectionEvidence.photoWidth,
+              height: detectionEvidence.photoHeight,
+            },
+          ]}
+          pointerEvents="none"
+          collapsable={false}
+        >
+          <Image
+            source={{ uri: detectionEvidence.photoUri }}
+            style={[
+              styles.evidenceCaptureImage,
+              {
+                width: detectionEvidence.photoWidth,
+                height: detectionEvidence.photoHeight,
+              },
+            ]}
+            resizeMode="contain"
+            onLoad={() => setEvidenceImageLoaded(true)}
+          />
+
+          <View style={styles.evidenceToastArea}>
+            <View style={styles.evidenceStandardToast}>
+              <Text style={styles.evidenceToastText}>
+                {detectionEvidence.standardMessage}
+              </Text>
+            </View>
+
+            {detectionEvidence.customMessage && (
+              <View style={styles.evidenceCustomToast}>
+                <Text style={styles.evidenceToastText}>
+                  {detectionEvidence.customMessage}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          <View style={styles.evidenceMetadata}>
+            <Text style={styles.evidenceMetadataText}>
+              {detectionEvidence.date} · {detectionEvidence.time}
+            </Text>
+
+            {detectionEvidence.coordinates && (
+              <Text style={styles.evidenceMetadataText}>
+                GPS: {detectionEvidence.coordinates}
+              </Text>
+            )}
+          </View>
+        </View>
+      )}
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
+  evidenceCaptureContainer: {
+    position: 'absolute',
+    left: -2000,
+    top: 0,
+    backgroundColor: 'black',
+    overflow: 'hidden',
+  },
+  evidenceCaptureImage: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+  },
+  evidenceToastArea: {
+    position: 'absolute',
+    top: 120,
+    left: 70,
+    right: 70,
+    alignItems: 'center',
+  },
+  evidenceStandardToast: {
+    maxWidth: '100%',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 149, 0, 0.92)',
+  },
+  evidenceCustomToast: {
+    marginTop: 10,
+    maxWidth: '100%',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    backgroundColor: '#FF3B30',
+  },
+  evidenceToastText: {
+    color: 'white',
+    fontSize: 22,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  evidenceMetadata: {
+    position: 'absolute',
+    left: 50,
+    right: 50,
+    bottom: 50,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+  },
+  evidenceMetadataText: {
+    color: 'white',
+    fontSize: 20,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginVertical: 2,
+  },
   overlayContainer: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent' },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 20 },
   focusFrame: { position: 'absolute', top: '25%', left: '10%', right: '10%', height: 120, borderWidth: 3, borderRadius: 12, backgroundColor: 'transparent' },
