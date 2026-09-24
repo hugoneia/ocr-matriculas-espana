@@ -3,13 +3,19 @@ import { Alert, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, S
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect } from 'expo-router';
+import * as DocumentPicker from 'expo-document-picker';
+import { File, Paths } from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
+import * as Sharing from 'expo-sharing';
 
 import { ScreenContainer } from '@/components/screen-container';
 import { DEFAULT_SCANNER_SETTINGS, loadScannerSettings, normalizeScannerSettings, saveScannerSettings, type ScannerSettings } from '@/lib/scanner-settings';
 
 const NOTIFICATION_RULES_STORAGE_KEY = 'notification_rules';
 const GLOBAL_NOTIFICATIONS_KEY = 'global_notifications_active';
+const SAVE_DETECTION_IMAGE_STORAGE_KEY = 'save_detection_image';
 const SPECIAL_ALERT_PLACEHOLDER = '¡Matrícula especial detectada!';
+const ALERTS_EXPORT_FILE_NAME = 'alertas_personalizadas.json';
 
 interface NotificationRule {
   plate: string;
@@ -38,6 +44,7 @@ function toTimeInputs(settings: ScannerSettings): TimeInputs {
 export default function AjustesScreen() {
   const [notificationRules, setNotificationRules] = useState<Record<string, NotificationRule>>({});
   const [globalNotificationsActive, setGlobalNotificationsActive] = useState(true);
+  const [saveDetectionImageEnabled, setSaveDetectionImageEnabled] = useState(false);
   const [timeInputs, setTimeInputs] = useState<TimeInputs>(toTimeInputs(DEFAULT_SCANNER_SETTINGS));
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [editingPlate, setEditingPlate] = useState('');
@@ -48,6 +55,7 @@ export default function AjustesScreen() {
     useCallback(() => {
       void loadNotificationSettings();
       void loadTimeSettings();
+      void loadSaveDetectionImageSetting();
     }, []),
   );
 
@@ -63,6 +71,163 @@ export default function AjustesScreen() {
   };
 
   const loadTimeSettings = async () => setTimeInputs(toTimeInputs(await loadScannerSettings()));
+
+  const loadSaveDetectionImageSetting = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(SAVE_DETECTION_IMAGE_STORAGE_KEY);
+      setSaveDetectionImageEnabled(stored === 'true');
+    } catch (error) {
+      console.error('Error loading image saving setting:', error);
+    }
+  };
+
+  const handleToggleSaveDetectionImage = async (value: boolean) => {
+    if (!value) {
+      try {
+        await AsyncStorage.setItem(SAVE_DETECTION_IMAGE_STORAGE_KEY, 'false');
+        setSaveDetectionImageEnabled(false);
+      } catch (error) {
+        console.error('Error disabling detection image saving:', error);
+        Alert.alert('Error', 'No se pudo guardar el ajuste.');
+      }
+      return;
+    }
+
+    try {
+      const permission = await MediaLibrary.getPermissionsAsync(true, ['photo']);
+      let permissionGranted = permission.status === 'granted';
+
+      if (!permissionGranted) {
+        const requested = await MediaLibrary.requestPermissionsAsync(true, ['photo']);
+        permissionGranted = requested.status === 'granted';
+      }
+
+      if (!permissionGranted) {
+        setSaveDetectionImageEnabled(false);
+        Alert.alert(
+          'Permiso necesario',
+          'Para guardar las capturas de detección debes permitir el acceso a las fotos.',
+        );
+        return;
+      }
+
+      await AsyncStorage.setItem(SAVE_DETECTION_IMAGE_STORAGE_KEY, 'true');
+      setSaveDetectionImageEnabled(true);
+    } catch (error) {
+      console.error('Error enabling detection image saving:', error);
+      setSaveDetectionImageEnabled(false);
+      Alert.alert('Error', 'No se pudo activar el guardado de capturas.');
+    }
+  };
+
+  const handleExportAlerts = async () => {
+    try {
+      const file = new File(Paths.cache, ALERTS_EXPORT_FILE_NAME);
+      await file.write(JSON.stringify(notificationRules, null, 2));
+
+      const available = await Sharing.isAvailableAsync();
+      if (!available) {
+        Alert.alert('Error', 'La función de compartir no está disponible en este dispositivo.');
+        return;
+      }
+
+      await Sharing.shareAsync(file.uri, {
+        mimeType: 'application/json',
+        dialogTitle: 'Exportar Alertas',
+      });
+    } catch (error) {
+      console.error('Error exporting notification rules:', error);
+      Alert.alert('Error', 'No se pudieron exportar las alertas.');
+    }
+  };
+
+  const handleImportAlerts = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/json',
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || result.assets.length === 0) return;
+
+      const content = await new File(result.assets[0].uri).text();
+      const parsed = JSON.parse(content) as unknown;
+
+      const importedRules: Record<string, NotificationRule> = {};
+
+      if (Array.isArray(parsed)) {
+        for (const entry of parsed) {
+          if (!entry || typeof entry !== 'object') continue;
+
+          const candidate = entry as Partial<NotificationRule>;
+          const plate = typeof candidate.plate === 'string'
+            ? candidate.plate.trim().toUpperCase()
+            : '';
+          const message = typeof candidate.message === 'string'
+            ? candidate.message.trim()
+            : '';
+
+          if (!plate || !message) continue;
+
+          importedRules[plate] = {
+            plate,
+            message,
+            active: candidate.active !== false,
+          };
+        }
+      } else if (parsed && typeof parsed === 'object') {
+        for (const [rawPlate, rawRule] of Object.entries(parsed)) {
+          if (!rawRule || typeof rawRule !== 'object') continue;
+
+          const candidate = rawRule as Partial<NotificationRule>;
+          const plate = (
+            typeof candidate.plate === 'string'
+              ? candidate.plate
+              : rawPlate
+          ).trim().toUpperCase();
+          const message = typeof candidate.message === 'string'
+            ? candidate.message.trim()
+            : '';
+
+          if (!plate || !message) continue;
+
+          importedRules[plate] = {
+            plate,
+            message,
+            active: candidate.active !== false,
+          };
+        }
+      }
+
+      const importedCount = Object.keys(importedRules).length;
+
+      if (importedCount === 0) {
+        Alert.alert('Importación', 'El archivo no contiene alertas válidas.');
+        return;
+      }
+
+      const mergedRules = {
+        ...notificationRules,
+        ...importedRules,
+      };
+
+      await saveNotificationSettings(
+        mergedRules,
+        globalNotificationsActive,
+      );
+
+      Alert.alert(
+        'Alertas importadas',
+        `Se han importado ${importedCount} alerta${importedCount === 1 ? '' : 's'}.`,
+      );
+    } catch (error) {
+      console.error('Error importing notification rules:', error);
+      Alert.alert(
+        'Error',
+        'No se pudo importar el archivo de alertas. Comprueba que sea un JSON válido.',
+      );
+    }
+  };
 
   const saveNotificationSettings = async (newRules: Record<string, NotificationRule>, globalActive: boolean) => {
     try {
@@ -172,10 +337,45 @@ export default function AjustesScreen() {
         </View>
 
         <View style={styles.section}>
+          <View style={styles.titleRow}>
+            <MaterialIcons name="photo-camera" size={22} color="#007AFF" />
+            <Text style={styles.sectionTitle}>Guardar captura de detección</Text>
+          </View>
+
+          <Text style={styles.helpText}>
+            Guarda automáticamente en Fotos una evidencia de cada matrícula detectada que tenga coincidencia en el registro.
+          </Text>
+
+          <View style={styles.globalToggleRow}>
+            <Text style={styles.globalToggleLabel}>Guardar capturas</Text>
+            <Switch
+              value={saveDetectionImageEnabled}
+              onValueChange={(value) => void handleToggleSaveDetectionImage(value)}
+            />
+          </View>
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Gestión de Alertas y Notificaciones</Text>
           <View style={styles.globalToggleRow}>
             <Text style={styles.globalToggleLabel}>Activar Notificaciones Globales</Text>
             <Switch value={globalNotificationsActive} onValueChange={(value) => void saveNotificationSettings(notificationRules, value)} />
+          </View>
+
+          <View style={styles.alertManagementButtons}>
+            <TouchableOpacity
+              style={[styles.button, styles.buttonSecondary, styles.halfButton]}
+              onPress={() => void handleImportAlerts()}
+            >
+              <Text style={styles.buttonText}>Importar Alertas</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.button, styles.buttonSecondary, styles.halfButton]}
+              onPress={() => void handleExportAlerts()}
+            >
+              <Text style={styles.buttonText}>Exportar Alertas</Text>
+            </TouchableOpacity>
           </View>
 
           <TouchableOpacity
@@ -248,6 +448,9 @@ const styles = StyleSheet.create({
   globalToggleLabel: { fontSize: 15, fontWeight: '600', color: '#11181C', flex: 1, paddingRight: 12 },
   button: { backgroundColor: '#007AFF', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, alignItems: 'center', marginTop: 12 },
   buttonPurple: { backgroundColor: '#5856D6', marginTop: 0 },
+  buttonSecondary: { backgroundColor: '#5C6BC0', marginTop: 0 },
+  alertManagementButtons: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  halfButton: { flex: 1 },
   buttonText: { color: 'white', fontSize: 16, fontWeight: '600' },
   rulesList: { marginTop: 16 },
   ruleItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8F9FA', padding: 10, borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: '#E5E7EB' },
