@@ -10,6 +10,62 @@ workflows:
       - name: Instalar dependencias
         script: |
           npm install
+
+      - name: Diagnosticar expo-asset y expo-audio
+        script: |
+          echo "===== npm explain expo-asset ====="
+          npm explain expo-asset || true
+
+          echo
+          echo "===== npm ls relevante ====="
+          npm ls expo-audio expo-asset expo-modules-core --all || true
+
+          echo
+          echo "===== package.json de paquetes relevantes ====="
+          node - <<'NODE'
+          const fs = require("fs");
+
+          const paths = [
+            "node_modules/expo/package.json",
+            "node_modules/expo-audio/package.json",
+            "node_modules/expo-asset/package.json",
+            "node_modules/expo-audio/node_modules/expo-asset/package.json"
+          ];
+
+          for (const path of paths) {
+            console.log("\n### " + path);
+
+            try {
+              const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+
+              console.log(JSON.stringify({
+                name: pkg.name,
+                version: pkg.version,
+                dependencies: pkg.dependencies,
+                peerDependencies: pkg.peerDependencies,
+                bundledDependencies: pkg.bundledDependencies
+              }, null, 2));
+            } catch (e) {
+              console.log("NO EXISTE");
+            }
+          }
+          NODE
+
+          echo
+          echo "===== TODAS LAS COPIAS DE expo-asset ====="
+          find node_modules -path "*/expo-asset/package.json" -print
+
+          echo
+          echo "===== REFERENCIAS A AnyTypeCache ====="
+          grep -RIl "AnyTypeCache" node_modules/expo-asset node_modules/expo-audio 2>/dev/null || true
+
+          echo
+          echo "===== AssetModule ====="
+          grep -RIl "class AssetModule" node_modules/expo-asset node_modules/expo-audio 2>/dev/null || true
+
+          echo
+          echo "===== CONTENIDO DE expo-asset ====="
+          find node_modules/expo-asset -maxdepth 3 -type f | sort | head -200
       - name: Diagnostico dependencias Expo
         script: |
           echo "===== VERSIONES EXPO ====="
