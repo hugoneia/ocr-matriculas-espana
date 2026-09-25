@@ -497,14 +497,14 @@ export default function AjustesScreen() {
 
                     {!plateIsValid && normalizedPlate.length > 0 && (
                       <Text style={styles.validationErrorText}>
-                        Introduce una matrícula española válida: 4 números y 3 letras.
+                        Formato aceptado: 0000XXX
                       </Text>
                     )}
 
                     {plateAlreadyConfigured && (
                       <>
                         <Text style={styles.validationWarningText}>
-                          ⚠️ Esta matrícula ya tiene una alerta configurada.
+                          ¡Ya existe una alerta configurada!
                         </Text>
 
                         <TouchableOpacity
@@ -595,8 +595,8 @@ const styles = StyleSheet.create({
   globalToggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, backgroundColor: '#F5F5F5', padding: 12, borderRadius: 8 },
   globalToggleLabel: { fontSize: 15, fontWeight: '600', color: '#11181C', flex: 1, paddingRight: 12 },
   button: { backgroundColor: '#007AFF', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, alignItems: 'center', marginTop: 12 },
-  buttonPurple: { backgroundColor: '#5856D6', marginTop: 0 },
-  buttonSecondary: { backgroundColor: '#5C6BC0', marginTop: 0 },
+  buttonPurple: { backgroundColor: '#007AFF', marginTop: 0 },
+  buttonSecondary: { backgroundColor: '#007AFF', marginTop: 0 },
   alertManagementButtons: { flexDirection: 'row', gap: 10, marginBottom: 12 },
   halfButton: { flex: 1 },
   buttonText: { color: 'white', fontSize: 16, fontWeight: '600' },
@@ -621,11 +621,11 @@ const styles = StyleSheet.create({
   messageInput: { height: 80, textAlignVertical: 'top' },
   validationErrorText: { color: '#FF3B30', fontSize: 13, marginTop: -10, marginBottom: 12 },
   validationWarningText: { color: '#FF9500', fontSize: 13, fontWeight: '600', marginTop: -8, marginBottom: 8 },
-  editExistingButton: { alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6, backgroundColor: '#FFF4E5', marginBottom: 16 },
-  editExistingButtonText: { color: '#C77700', fontSize: 13, fontWeight: '700' },
+  editExistingButton: { width: '100%', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, backgroundColor: '#007AFF', alignItems: 'center', marginBottom: 16 },
+  editExistingButtonText: { color: 'white', fontSize: 16, fontWeight: '600' },
   modalButtonsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
   modalButton: { flex: 1, paddingVertical: 12, borderRadius: 8, alignItems: 'center', marginHorizontal: 6 },
-  modalButtonCancel: { backgroundColor: '#8E8E93' },
+  modalButtonCancel: { backgroundColor: '#007AFF' },
   modalButtonSave: { backgroundColor: '#007AFF' },
   modalButtonSaveDisabled: { backgroundColor: '#A7A7AC' },
   modalButtonText: { color: 'white', fontSize: 16, fontWeight: '600' },
