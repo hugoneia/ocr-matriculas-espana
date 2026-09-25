@@ -14,6 +14,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 
 import { ScreenContainer } from '@/components/screen-container';
 import { DEFAULT_SCANNER_SETTINGS, loadScannerSettings, type ScannerSettings } from '@/lib/scanner-settings';
+import { extractSpanishPlateFromOcr } from '@/lib/license-plate-ocr';
 
 const IMPORTED_PLATES_STORAGE_KEY = 'imported_plates';
 const NOTIFICATION_RULES_STORAGE_KEY = 'notification_rules';
@@ -549,14 +550,13 @@ return;
       const result = await TextRecognition.recognize(photo.uri);
       if (!isAppActiveRef.current || !isScreenFocusedRef.current || (automatic && scanModeRef.current !== 'video')) return;
 
-      const cleanText = result.text.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-const match = cleanText.match(/\d{4}[B-DF-HJ-NP-TV-Z]{3}/);
-if (!match?.[0]) {
+      const candidate = extractSpanishPlateFromOcr(result);
+      if (!candidate) {
         if (await registerNewDetection(INVALID_OCR_DEDUPLICATION_KEY)) showStandardToast('No se detectó matrícula válida', 'error');
-return;
-}
+        return;
+      }
 
-      const detectedPlate = match[0];
+      const detectedPlate = candidate.plate;
       if (!(await registerNewDetection(detectedPlate))) return;
       if (recentDetectionAtRef.current.delete(INVALID_OCR_DEDUPLICATION_KEY)) {
         await AsyncStorage.setItem(
@@ -1052,17 +1052,19 @@ const styles = StyleSheet.create({
     left: 50,
     right: 50,
     bottom: 50,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,0,0,0.72)',
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    backgroundColor: 'transparent',
   },
   evidenceMetadataText: {
     color: 'white',
-    fontSize: 20,
+    fontSize: 14,
     fontWeight: '600',
     textAlign: 'center',
     marginVertical: 2,
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   overlayContainer: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent' },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 20 },
