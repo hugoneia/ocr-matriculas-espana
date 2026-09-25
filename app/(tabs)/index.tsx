@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, AppStateStatus, Image, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { AppState, AppStateStatus, Image, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import { Camera, CameraView } from 'expo-camera';
 import { File, Paths } from 'expo-file-system';
@@ -154,6 +154,10 @@ export default function HomeScreen() {
   const [scannerSettings, setScannerSettings] = useState<ScannerSettings>(DEFAULT_SCANNER_SETTINGS);
   const [detectionEvidence, setDetectionEvidence] = useState<DetectionEvidence | null>(null);
   const [evidenceImageLoaded, setEvidenceImageLoaded] = useState(false);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+
+  const evidenceWidth = Math.min(windowWidth, windowHeight);
+  const evidenceHeight = Math.max(windowWidth, windowHeight);
 
   const cameraRef = useRef<CameraView>(null);
   const evidenceViewRef = useRef<View>(null);
@@ -949,8 +953,8 @@ void loadImportedPlates();
           style={[
             styles.evidenceCaptureContainer,
             {
-              width: detectionEvidence.photoWidth,
-              height: detectionEvidence.photoHeight,
+              width: evidenceWidth,
+              height: evidenceHeight,
             },
           ]}
           pointerEvents="none"
@@ -961,11 +965,11 @@ void loadImportedPlates();
             style={[
               styles.evidenceCaptureImage,
               {
-                width: detectionEvidence.photoWidth,
-                height: detectionEvidence.photoHeight,
+                width: evidenceWidth,
+                height: evidenceHeight,
               },
             ]}
-            resizeMode="contain"
+            resizeMode="cover"
             onLoad={() => setEvidenceImageLoaded(true)}
           />
 
@@ -1005,9 +1009,9 @@ void loadImportedPlates();
 const styles = StyleSheet.create({
   evidenceCaptureContainer: {
     position: 'absolute',
-    left: -2000,
-    top: 0,
-    backgroundColor: 'black',
+    left: -10000,
+    top: -10000,
+    backgroundColor: 'transparent',
     overflow: 'hidden',
   },
   evidenceCaptureImage: {

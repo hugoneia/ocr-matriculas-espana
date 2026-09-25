@@ -16,6 +16,7 @@ const GLOBAL_NOTIFICATIONS_KEY = 'global_notifications_active';
 const SAVE_DETECTION_IMAGE_STORAGE_KEY = 'save_detection_image';
 const SPECIAL_ALERT_PLACEHOLDER = '¡Matrícula especial detectada!';
 const ALERTS_EXPORT_FILE_NAME = 'alertas_personalizadas.json';
+const SPANISH_PLATE_REGEX = /^\d{4}[BCDFGHJKLMNPRSTVWXYZ]{3}$/;
 
 interface NotificationRule {
   plate: string;
@@ -48,6 +49,7 @@ export default function AjustesScreen() {
   const [timeInputs, setTimeInputs] = useState<TimeInputs>(toTimeInputs(DEFAULT_SCANNER_SETTINGS));
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [editingPlate, setEditingPlate] = useState('');
+  const [editingExistingPlate, setEditingExistingPlate] = useState<string | null>(null);
   const [notificationMessage, setNotificationMessage] = useState('');
   const [isRuleActive, setIsRuleActive] = useState(true);
 
@@ -141,6 +143,11 @@ export default function AjustesScreen() {
     }
   };
 
+  const normalizePlate = (value: string) => value.trim().toUpperCase();
+
+  const isValidSpanishPlate = (value: string) =>
+    SPANISH_PLATE_REGEX.test(normalizePlate(value));
+
   const handleImportAlerts = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -167,7 +174,7 @@ export default function AjustesScreen() {
             ? candidate.message.trim()
             : '';
 
-          if (!plate || !message) continue;
+          if (!isValidSpanishPlate(plate) || !message) continue;
 
           importedRules[plate] = {
             plate,
@@ -189,7 +196,7 @@ export default function AjustesScreen() {
             ? candidate.message.trim()
             : '';
 
-          if (!plate || !message) continue;
+          if (!isValidSpanishPlate(plate) || !message) continue;
 
           importedRules[plate] = {
             plate,
@@ -282,23 +289,63 @@ export default function AjustesScreen() {
 
   const handleOpenEditRule = (plate: string) => {
     const existing = notificationRules[plate];
+
+    setEditingExistingPlate(plate);
     setEditingPlate(plate);
     setNotificationMessage(existing?.message ?? '');
     setIsRuleActive(existing?.active ?? true);
     setShowNotificationModal(true);
   };
 
-  const handleSaveRule = () => {
-    const plate = editingPlate.trim().toUpperCase();
-    if (!plate) {
-      Alert.alert('Error', 'La matrícula no puede estar vacía.');
+  const handleOpenExistingAlert = () => {
+    const plate = normalizePlate(editingPlate);
+
+    if (!isValidSpanishPlate(plate) || !notificationRules[plate]) {
       return;
     }
 
-    void saveNotificationSettings({
-      ...notificationRules,
-      [plate]: { plate, message: notificationMessage.trim() || SPECIAL_ALERT_PLACEHOLDER, active: isRuleActive },
-    }, globalNotificationsActive);
+    handleOpenEditRule(plate);
+  };
+
+  const handleSaveRule = () => {
+    const plate = normalizePlate(editingPlate);
+    const existingRule = notificationRules[plate];
+
+    if (!isValidSpanishPlate(plate)) {
+      Alert.alert(
+        'Matrícula no válida',
+        'Introduce una matrícula española válida con 4 números y 3 letras.',
+      );
+      return;
+    }
+
+    if (existingRule && existingRule.plate !== editingExistingPlate) {
+      Alert.alert(
+        'Alerta ya configurada',
+        'Esta matrícula ya tiene una alerta configurada. Edita la alerta existente o introduce otra matrícula.',
+      );
+      return;
+    }
+
+    const previousPlate = editingExistingPlate;
+    const updatedRules = { ...notificationRules };
+
+    if (previousPlate && previousPlate !== plate) {
+      delete updatedRules[previousPlate];
+    }
+
+    updatedRules[plate] = {
+      plate,
+      message: notificationMessage.trim() || SPECIAL_ALERT_PLACEHOLDER,
+      active: isRuleActive,
+    };
+
+    void saveNotificationSettings(
+      updatedRules,
+      globalNotificationsActive,
+    );
+
+    setEditingExistingPlate(null);
     setShowNotificationModal(false);
   };
 
@@ -381,6 +428,7 @@ export default function AjustesScreen() {
           <TouchableOpacity
             style={[styles.button, styles.buttonPurple]}
             onPress={() => {
+              setEditingExistingPlate(null);
               setEditingPlate('');
               setNotificationMessage('');
               setIsRuleActive(true);
@@ -414,18 +462,118 @@ export default function AjustesScreen() {
           <ScrollView contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled">
             <View style={styles.modalContent}>
               <Text style={styles.modalTitleText}>Configurar Alerta de Matrícula</Text>
-              <Text style={styles.inputLabel}>Matrícula:</Text>
-              <TextInput style={styles.textInput} placeholder="Ej: 1234ABC" value={editingPlate} onChangeText={setEditingPlate} autoCapitalize="characters" />
-              <Text style={styles.inputLabel}>Texto de Notificación (Toast):</Text>
-              <TextInput style={[styles.textInput, styles.messageInput]} placeholder={SPECIAL_ALERT_PLACEHOLDER} value={notificationMessage} onChangeText={setNotificationMessage} multiline />
-              <View style={styles.globalToggleRow}>
-                <Text style={styles.globalToggleLabel}>Alerta Activa</Text>
-                <Switch value={isRuleActive} onValueChange={setIsRuleActive} />
-              </View>
-              <View style={styles.modalButtonsRow}>
-                <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setShowNotificationModal(false)}><Text style={styles.modalButtonText}>Cancelar</Text></TouchableOpacity>
-                <TouchableOpacity style={[styles.modalButton, styles.modalButtonSave]} onPress={handleSaveRule}><Text style={styles.modalButtonText}>Guardar</Text></TouchableOpacity>
-              </View>
+              {(() => {
+                const normalizedPlate = normalizePlate(editingPlate);
+                const plateIsValid = isValidSpanishPlate(normalizedPlate);
+                const existingRule = plateIsValid
+                  ? notificationRules[normalizedPlate]
+                  : undefined;
+                const isCurrentEditedRule =
+                  editingExistingPlate !== null &&
+                  normalizedPlate === editingExistingPlate;
+                const plateAlreadyConfigured =
+                  Boolean(existingRule) && !isCurrentEditedRule;
+
+                return (
+                  <>
+                    <Text style={styles.inputLabel}>Matrícula:</Text>
+
+                    <TextInput
+                      style={[
+                        styles.textInput,
+                        !plateIsValid && normalizedPlate.length > 0
+                          ? styles.textInputInvalid
+                          : plateAlreadyConfigured
+                            ? styles.textInputExisting
+                            : plateIsValid
+                              ? styles.textInputValid
+                              : null,
+                      ]}
+                      placeholder="Ej: 1234ABC"
+                      value={editingPlate}
+                      onChangeText={setEditingPlate}
+                      autoCapitalize="characters"
+                    />
+
+                    {!plateIsValid && normalizedPlate.length > 0 && (
+                      <Text style={styles.validationErrorText}>
+                        Introduce una matrícula española válida: 4 números y 3 letras.
+                      </Text>
+                    )}
+
+                    {plateAlreadyConfigured && (
+                      <>
+                        <Text style={styles.validationWarningText}>
+                          ⚠️ Esta matrícula ya tiene una alerta configurada.
+                        </Text>
+
+                        <TouchableOpacity
+                          style={styles.editExistingButton}
+                          onPress={handleOpenExistingAlert}
+                        >
+                          <Text style={styles.editExistingButtonText}>
+                            Editar alerta existente
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    )}
+
+                    <Text style={styles.inputLabel}>
+                      Texto de Notificación (Toast):
+                    </Text>
+
+                    <TextInput
+                      style={[
+                        styles.textInput,
+                        styles.messageInput,
+                        plateAlreadyConfigured ? styles.disabledTextInput : null,
+                      ]}
+                      placeholder={SPECIAL_ALERT_PLACEHOLDER}
+                      value={notificationMessage}
+                      onChangeText={setNotificationMessage}
+                      multiline
+                      editable={!plateAlreadyConfigured}
+                    />
+
+                    <View style={styles.globalToggleRow}>
+                      <Text style={styles.globalToggleLabel}>Alerta Activa</Text>
+                      <Switch
+                        value={isRuleActive}
+                        onValueChange={setIsRuleActive}
+                        disabled={plateAlreadyConfigured}
+                      />
+                    </View>
+
+                    <View style={styles.modalButtonsRow}>
+                      <TouchableOpacity
+                        style={[
+                          styles.modalButton,
+                          styles.modalButtonCancel,
+                        ]}
+                        onPress={() => {
+                          setEditingExistingPlate(null);
+                          setShowNotificationModal(false);
+                        }}
+                      >
+                        <Text style={styles.modalButtonText}>Cancelar</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.modalButton,
+                          styles.modalButtonSave,
+                          (!plateIsValid || plateAlreadyConfigured) &&
+                            styles.modalButtonSaveDisabled,
+                        ]}
+                        onPress={handleSaveRule}
+                        disabled={!plateIsValid || plateAlreadyConfigured}
+                      >
+                        <Text style={styles.modalButtonText}>Guardar</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                );
+              })()}
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -466,10 +614,19 @@ const styles = StyleSheet.create({
   modalTitleText: { fontSize: 18, fontWeight: 'bold', marginBottom: 16, textAlign: 'center', color: '#11181C' },
   inputLabel: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 6 },
   textInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, padding: 10, fontSize: 15, marginBottom: 16, backgroundColor: '#F9FAFB' },
+  textInputValid: { borderColor: '#34C759' },
+  textInputInvalid: { borderColor: '#FF3B30' },
+  textInputExisting: { borderColor: '#FF9500' },
+  disabledTextInput: { backgroundColor: '#E5E7EB', color: '#8E8E93' },
   messageInput: { height: 80, textAlignVertical: 'top' },
+  validationErrorText: { color: '#FF3B30', fontSize: 13, marginTop: -10, marginBottom: 12 },
+  validationWarningText: { color: '#FF9500', fontSize: 13, fontWeight: '600', marginTop: -8, marginBottom: 8 },
+  editExistingButton: { alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6, backgroundColor: '#FFF4E5', marginBottom: 16 },
+  editExistingButtonText: { color: '#C77700', fontSize: 13, fontWeight: '700' },
   modalButtonsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
   modalButton: { flex: 1, paddingVertical: 12, borderRadius: 8, alignItems: 'center', marginHorizontal: 6 },
   modalButtonCancel: { backgroundColor: '#8E8E93' },
   modalButtonSave: { backgroundColor: '#007AFF' },
+  modalButtonSaveDisabled: { backgroundColor: '#A7A7AC' },
   modalButtonText: { color: 'white', fontSize: 16, fontWeight: '600' },
 });

@@ -477,7 +477,20 @@ export default function RegistrosScreen() {
         return;
       }
 
-      await Sharing.shareAsync(platesFile.uri, {
+      const now = new Date();
+      const pad = (value: number) => value.toString().padStart(2, '0');
+      const timestamp =
+        `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+        `_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
+      const exportFile = new File(
+        Paths.cache,
+        `matriculas_detectadas_${timestamp}.csv`,
+      );
+
+      await exportFile.write(content);
+
+      await Sharing.shareAsync(exportFile.uri, {
         dialogTitle: 'Exportar registros',
         mimeType: 'text/csv',
       });
