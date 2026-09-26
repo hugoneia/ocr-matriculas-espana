@@ -253,6 +253,126 @@ export default function RegistrosScreen() {
     }
   };
 
+  const handleImportDetectionRecords = async () => {
+    try {
+      setIsLoading(true);
+
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel', 'text/plain'],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets?.length) return;
+
+      const selectedAsset = result.assets[0];
+      const tempUri = `${FileSystem.cacheDirectory}temp_detection_import.csv`;
+
+      await FileSystem.deleteAsync(tempUri, { idempotent: true });
+      await FileSystem.copyAsync({ from: selectedAsset.uri, to: tempUri });
+
+      const lines = (await FileSystem.readAsStringAsync(tempUri, {
+        encoding: FileSystem.EncodingType.UTF8,
+      }))
+        .replace(/^\uFEFF/, '')
+        .replace(/\r\n/g, '\n')
+        .split('\n')
+        .filter((line) => line.trim() !== '');
+
+      const firstRowIsHeader = lines[0]?.toUpperCase().includes('MATR') ?? false;
+      const importedRows: string[] = [];
+
+      for (let i = firstRowIsHeader ? 1 : 0; i < lines.length; i += 1) {
+        const match = lines[i].match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"$/);
+
+        if (!match) continue;
+
+        const [, rawPlate = '', rawDate = '', rawTime = '', rawCoordinates = ''] = match;
+        const plate = rawPlate.trim().replace(/"/g, '').toUpperCase();
+        const date = rawDate.trim().replace(/"/g, '');
+        const time = rawTime.trim().replace(/"/g, '');
+        const coordinates = rawCoordinates.trim();
+
+        const coordinateParts = coordinates.split(',');
+        const latitude = coordinateParts[0]?.trim() ?? '';
+        const longitude = coordinateParts[1]?.trim() ?? '';
+
+        if (!plate || !date || !time || !latitude || !longitude) continue;
+
+        if (
+          !Number.isFinite(Number(latitude)) ||
+          !Number.isFinite(Number(longitude))
+        ) {
+          continue;
+        }
+
+        importedRows.push(
+          `${plate},${date},${time},"${latitude},${longitude}"`,
+        );
+      }
+
+      if (importedRows.length === 0) {
+        Alert.alert(
+          'Importar detecciones',
+          'No se encontraron registros válidos en el CSV seleccionado.',
+        );
+        return;
+      }
+
+      const platesFile = getPlatesFile();
+      let currentContent = '';
+
+      if ((await platesFile.info()).exists) {
+        currentContent = await platesFile.text();
+      }
+
+      if (!currentContent.trim()) {
+        currentContent = 'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD\n';
+      }
+
+      const existingLines = currentContent
+        .replace(/^\uFEFF/, '')
+        .replace(/\r\n/g, '\n')
+        .split('\n')
+        .filter((line) => line.trim() !== '');
+
+      const header = existingLines[0] ?? 'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD';
+      const existingRows = existingLines.slice(1);
+
+      const existingSet = new Set(existingRows);
+      let importedCount = 0;
+      let duplicateCount = 0;
+
+      for (const row of importedRows) {
+        if (existingSet.has(row)) {
+          duplicateCount += 1;
+          continue;
+        }
+
+        existingSet.add(row);
+        existingRows.push(row);
+        importedCount += 1;
+      }
+
+      await platesFile.write(`${[header, ...existingRows].join('\n')}\n`);
+      await FileSystem.deleteAsync(tempUri, { idempotent: true });
+
+      await loadScannedPlates();
+
+      Alert.alert(
+        'Importar detecciones',
+        `Nuevas: ${importedCount}\nDuplicadas: ${duplicateCount}`,
+      );
+    } catch (error) {
+      console.error('Error importing detection records:', error);
+      Alert.alert(
+        'Importar detecciones',
+        'No se pudieron importar los registros.',
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleClearCSV = () => {
     Alert.alert('Limpiar Registros CSV', '¿Eliminar todas las matrículas importadas?', [
       { text: 'Cancelar', style: 'cancel' },
@@ -526,6 +646,13 @@ export default function RegistrosScreen() {
               <TouchableOpacity style={styles.buttonExport} onPress={() => void handleExportRecords()}>
                 <Text style={styles.buttonSmallText}>📤 Exportar</Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.buttonImport}
+                onPress={() => void handleImportDetectionRecords()}
+                disabled={isLoading}
+              >
+                <Text style={styles.buttonSmallText}>📥 Importar</Text>
+              </TouchableOpacity>
               {scannedPlates.length > 0 && (
                 <TouchableOpacity style={styles.buttonSmall} onPress={handleClearOCR}>
                   <Text style={styles.buttonSmallText}>Eliminar</Text>
@@ -577,6 +704,7 @@ const styles = StyleSheet.create({
   buttonText: { color: 'white', fontSize: 16, fontWeight: '600' },
   buttonSmall: { flexShrink: 0, backgroundColor: '#FF3B30', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 },
   buttonExport: { flexShrink: 0, backgroundColor: '#007AFF', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 },
+  buttonImport: { flexShrink: 0, backgroundColor: '#34C759', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 },
   buttonSmallText: { color: 'white', fontSize: 12, fontWeight: '600' },
   helpText: { color: '#687076', fontSize: 13, lineHeight: 18, marginBottom: 12 },
   statusText: { fontSize: 14, color: '#22C55E', marginBottom: 12, fontWeight: '500' },

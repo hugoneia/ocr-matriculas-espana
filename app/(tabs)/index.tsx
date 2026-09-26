@@ -624,6 +624,8 @@ console.error('Error during scan:', error);
 
     firstFrame = requestAnimationFrame(() => {
       secondFrame = requestAnimationFrame(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+
         try {
           if (!evidenceViewRef.current) return;
 
