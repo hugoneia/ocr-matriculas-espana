@@ -1054,9 +1054,10 @@ const styles = StyleSheet.create({
     left: 50,
     right: 50,
     bottom: 50,
-    paddingVertical: 0,
-    paddingHorizontal: 0,
-    backgroundColor: 'transparent',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
   },
   evidenceMetadataText: {
     color: 'white',

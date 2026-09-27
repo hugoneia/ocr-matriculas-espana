@@ -462,94 +462,87 @@ export default function RegistrosScreen() {
               }
 
               // --------------------------------------------------------
-              // Buscar la detección correspondiente en AsyncStorage.
+              // El CSV es la fuente principal del historial visible.
               //
-              // La hora del CSV puede ser posterior a la hora del OCR
-              // porque entre ambas operaciones se obtiene el GPS.
-              // Por eso se busca la detección de la misma matrícula cuyo
-              // timestamp sea el más cercano, con un máximo de 5 minutos.
+              // La detección de AsyncStorage es secundaria: se intenta
+              // localizar y eliminar también, pero ningún fallo o ausencia
+              // de esa detección puede impedir borrar la fila seleccionada
+              // del historial.
               // --------------------------------------------------------
-              const rawDetections = await AsyncStorage.getItem(
-                ALL_DETECTIONS_STORAGE_KEY,
-              );
-
-              if (rawDetections === null) {
-                Alert.alert(
-                  'Error',
-                  'No se encontró el almacenamiento de detecciones. No se ha eliminado el registro.',
-                );
-                return;
-              }
-
-              const detections = parseStoredDetections(rawDetections);
-              const targetTimestamp = parseSpanishDateTimeToTimestamp(
-                item.date,
-                item.time,
-              );
-
+              let detectionsToUpdate: StoredDetection[] | null = null;
               let detectionIndex = -1;
-              let closestDifference = Number.POSITIVE_INFINITY;
 
-              if (targetTimestamp !== null) {
-                detections.forEach((detection, index) => {
-                  if (
-                    detection.plate !== item.plate ||
-                    typeof detection.timestamp !== 'number'
-                  ) {
-                    return;
-                  }
+              try {
+                const rawDetections = await AsyncStorage.getItem(
+                  ALL_DETECTIONS_STORAGE_KEY,
+                );
 
-                  const difference = Math.abs(
-                    detection.timestamp - targetTimestamp,
+                if (rawDetections !== null) {
+                  const detections = parseStoredDetections(rawDetections);
+                  const targetTimestamp = parseSpanishDateTimeToTimestamp(
+                    item.date,
+                    item.time,
                   );
 
-                  if (
-                    difference <= 5 * 60 * 1000 &&
-                    difference < closestDifference
-                  ) {
-                    closestDifference = difference;
-                    detectionIndex = index;
+                  let closestDifference = Number.POSITIVE_INFINITY;
+
+                  if (targetTimestamp !== null) {
+                    detections.forEach((detection, index) => {
+                      if (
+                        detection.plate !== item.plate ||
+                        typeof detection.timestamp !== 'number'
+                      ) {
+                        return;
+                      }
+
+                      const difference = Math.abs(
+                        detection.timestamp - targetTimestamp,
+                      );
+
+                      if (
+                        difference <= 5 * 60 * 1000 &&
+                        difference < closestDifference
+                      ) {
+                        closestDifference = difference;
+                        detectionIndex = index;
+                      }
+                    });
                   }
-                });
-              }
 
-              // Para datos antiguos sin timestamp solo permitimos el borrado
-              // si existe exactamente una detección de esa matrícula.
-              if (detectionIndex === -1) {
-                const samePlateIndexes = detections
-                  .map((detection, index) => ({ detection, index }))
-                  .filter(({ detection }) => detection.plate === item.plate)
-                  .map(({ index }) => index);
+                  // Para datos antiguos sin timestamp solo permitimos asociar
+                  // automáticamente si existe exactamente una detección de
+                  // esa matrícula y además es la única disponible.
+                  if (detectionIndex === -1) {
+                    const samePlateIndexes = detections
+                      .map((detection, index) => ({ detection, index }))
+                      .filter(({ detection }) => detection.plate === item.plate)
+                      .map(({ index }) => index);
 
-                const indexesWithoutTimestamp = samePlateIndexes.filter(
-                  (index) => typeof detections[index]?.timestamp !== 'number',
-                );
+                    const indexesWithoutTimestamp = samePlateIndexes.filter(
+                      (index) => typeof detections[index]?.timestamp !== 'number',
+                    );
 
-                if (indexesWithoutTimestamp.length === 1 && samePlateIndexes.length === 1) {
-                  detectionIndex = indexesWithoutTimestamp[0];
+                    if (
+                      indexesWithoutTimestamp.length === 1 &&
+                      samePlateIndexes.length === 1
+                    ) {
+                      detectionIndex = indexesWithoutTimestamp[0];
+                    }
+                  }
+
+                  if (detectionIndex !== -1) {
+                    detectionsToUpdate = detections;
+                  }
                 }
-              }
-
-              if (detectionIndex === -1) {
-                Alert.alert(
-                  'Error',
-                  'No se pudo asociar de forma segura este registro con la detección almacenada. No se ha eliminado nada.',
+              } catch (error) {
+                console.warn(
+                  'No se pudo actualizar la detección interna al borrar el historial:',
+                  error,
                 );
-                return;
               }
 
               // --------------------------------------------------------
-              // Actualizar primero AsyncStorage.
-              // --------------------------------------------------------
-              detections.splice(detectionIndex, 1);
-
-              await AsyncStorage.setItem(
-                ALL_DETECTIONS_STORAGE_KEY,
-                JSON.stringify(detections),
-              );
-
-              // --------------------------------------------------------
-              // Después eliminar exactamente esa línea del CSV.
+              // Eliminar siempre la fila exacta del CSV.
               // --------------------------------------------------------
               dataLines.splice(targetIndex, 1);
 
@@ -560,6 +553,27 @@ export default function RegistrosScreen() {
                   `${[header, ...dataLines].join('\n')}\n`,
                 );
               }
+
+              // --------------------------------------------------------
+              // La limpieza de AsyncStorage es secundaria. Si falla, el
+              // registro del CSV ya se ha eliminado y no se revierte.
+              // --------------------------------------------------------
+              if (detectionsToUpdate !== null && detectionIndex !== -1) {
+                try {
+                  detectionsToUpdate.splice(detectionIndex, 1);
+
+                  await AsyncStorage.setItem(
+                    ALL_DETECTIONS_STORAGE_KEY,
+                    JSON.stringify(detectionsToUpdate),
+                  );
+                } catch (error) {
+                  console.warn(
+                    'El registro del historial se eliminó, pero no se pudo limpiar la detección interna:',
+                    error,
+                  );
+                }
+              }
+
 
               // Recargar el historial desde el CSV.
               await loadScannedPlates();
@@ -640,25 +654,23 @@ export default function RegistrosScreen() {
         </View>
 
         <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, styles.sectionTitleInHeader]}>Historial</Text>
-            <View style={styles.historyActions}>
-              <TouchableOpacity style={styles.buttonExport} onPress={() => void handleExportRecords()}>
-                <Text style={styles.buttonSmallText}>📤 Exportar</Text>
+          <Text style={styles.sectionTitle}>Historial</Text>
+          <View style={styles.historyActions}>
+            <TouchableOpacity style={styles.buttonExport} onPress={() => void handleExportRecords()}>
+              <Text style={styles.buttonSmallText}>📤 Exportar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.buttonImport}
+              onPress={() => void handleImportDetectionRecords()}
+              disabled={isLoading}
+            >
+              <Text style={styles.buttonSmallText}>📥 Importar</Text>
+            </TouchableOpacity>
+            {scannedPlates.length > 0 && (
+              <TouchableOpacity style={styles.buttonSmall} onPress={handleClearOCR}>
+                <Text style={styles.buttonSmallText}>Eliminar</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.buttonImport}
-                onPress={() => void handleImportDetectionRecords()}
-                disabled={isLoading}
-              >
-                <Text style={styles.buttonSmallText}>📥 Importar</Text>
-              </TouchableOpacity>
-              {scannedPlates.length > 0 && (
-                <TouchableOpacity style={styles.buttonSmall} onPress={handleClearOCR}>
-                  <Text style={styles.buttonSmallText}>Eliminar</Text>
-                </TouchableOpacity>
-              )}
-            </View>
+            )}
           </View>
           <Text style={styles.helpText}>Solo se muestran detecciones que existen en el CSV importado.</Text>
           {scannedPlates.length > 0 ? (
@@ -696,7 +708,7 @@ const styles = StyleSheet.create({
   content: { paddingBottom: 40 },
   section: { marginBottom: 24, backgroundColor: '#fff', padding: 16, borderRadius: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 },
-  historyActions: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
+  historyActions: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0, marginBottom: 8 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#11181C', marginBottom: 12 },
   sectionTitleInHeader: { flex: 1, flexShrink: 1, marginBottom: 0 },
   button: { backgroundColor: '#007AFF', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, alignItems: 'center', marginBottom: 12 },
