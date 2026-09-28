@@ -14,6 +14,7 @@ import { DEFAULT_SCANNER_SETTINGS, loadScannerSettings, normalizeScannerSettings
 const NOTIFICATION_RULES_STORAGE_KEY = 'notification_rules';
 const GLOBAL_NOTIFICATIONS_KEY = 'global_notifications_active';
 const SAVE_DETECTION_IMAGE_STORAGE_KEY = 'save_detection_image';
+const BYPASS_REGISTRATIONS_STORAGE_KEY = 'bypass_registrations';
 const SPECIAL_ALERT_PLACEHOLDER = '¡Matrícula especial detectada!';
 const ALERTS_EXPORT_FILE_NAME = 'alertas_personalizadas.json';
 const SPANISH_PLATE_REGEX = /^\d{4}[BCDFGHJKLMNPRSTVWXYZ]{3}$/;
@@ -46,6 +47,7 @@ export default function AjustesScreen() {
   const [notificationRules, setNotificationRules] = useState<Record<string, NotificationRule>>({});
   const [globalNotificationsActive, setGlobalNotificationsActive] = useState(true);
   const [saveDetectionImageEnabled, setSaveDetectionImageEnabled] = useState(false);
+  const [bypassRegistrationsEnabled, setBypassRegistrationsEnabled] = useState(false);
   const [timeInputs, setTimeInputs] = useState<TimeInputs>(toTimeInputs(DEFAULT_SCANNER_SETTINGS));
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [editingPlate, setEditingPlate] = useState('');
@@ -58,6 +60,7 @@ export default function AjustesScreen() {
       void loadNotificationSettings();
       void loadTimeSettings();
       void loadSaveDetectionImageSetting();
+      void loadBypassRegistrationsSetting();
     }, []),
   );
 
@@ -80,6 +83,25 @@ export default function AjustesScreen() {
       setSaveDetectionImageEnabled(stored === 'true');
     } catch (error) {
       console.error('Error loading image saving setting:', error);
+    }
+  };
+
+  const loadBypassRegistrationsSetting = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(BYPASS_REGISTRATIONS_STORAGE_KEY);
+      setBypassRegistrationsEnabled(stored === 'true');
+    } catch (error) {
+      console.error('Error loading bypass registrations setting:', error);
+    }
+  };
+
+  const handleToggleBypassRegistrations = async (value: boolean) => {
+    try {
+      await AsyncStorage.setItem(BYPASS_REGISTRATIONS_STORAGE_KEY, String(value));
+      setBypassRegistrationsEnabled(value);
+    } catch (error) {
+      console.error('Error saving bypass registrations setting:', error);
+      Alert.alert('Error', 'No se pudo guardar el ajuste.');
     }
   };
 
@@ -386,11 +408,11 @@ export default function AjustesScreen() {
         <View style={styles.section}>
           <View style={styles.titleRow}>
             <MaterialIcons name="photo-camera" size={22} color="#007AFF" />
-            <Text style={styles.sectionTitle}>Guardar captura de detección</Text>
+            <Text style={styles.sectionTitle}>Ajustes de detecciones</Text>
           </View>
 
           <Text style={styles.helpText}>
-            Guarda automáticamente en Fotos una evidencia de cada matrícula detectada que tenga coincidencia en el registro.
+            Opciones de guardar captura de detecciones si hay coincidencia y hacer bypass de guardado de registro (solo detección).
           </Text>
 
           <View style={styles.globalToggleRow}>
@@ -400,12 +422,23 @@ export default function AjustesScreen() {
               onValueChange={(value) => void handleToggleSaveDetectionImage(value)}
             />
           </View>
+
+          <View style={styles.globalToggleRow}>
+            <Text style={styles.globalToggleLabel}>Bypass registros</Text>
+            <Switch
+              value={bypassRegistrationsEnabled}
+              onValueChange={(value) => void handleToggleBypassRegistrations(value)}
+            />
+          </View>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Gestión de Alertas y Notificaciones</Text>
+          <View style={styles.titleRow}>
+            <MaterialIcons name="notifications-active" size={22} color="#007AFF" />
+            <Text style={styles.sectionTitle}>Gestión de Alertas</Text>
+          </View>
           <View style={styles.globalToggleRow}>
-            <Text style={styles.globalToggleLabel}>Activar Notificaciones Globales</Text>
+            <Text style={styles.globalToggleLabel}>Activar alertas personalizadas</Text>
             <Switch value={globalNotificationsActive} onValueChange={(value) => void saveNotificationSettings(notificationRules, value)} />
           </View>
 

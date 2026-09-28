@@ -20,6 +20,7 @@ const IMPORTED_PLATES_STORAGE_KEY = 'imported_plates';
 const NOTIFICATION_RULES_STORAGE_KEY = 'notification_rules';
 const GLOBAL_NOTIFICATIONS_KEY = 'global_notifications_active';
 const SAVE_DETECTION_IMAGE_STORAGE_KEY = 'save_detection_image';
+const BYPASS_REGISTRATIONS_STORAGE_KEY = 'bypass_registrations';
 const ALL_DETECTIONS_STORAGE_KEY = 'all_scanned_plate_detections';
 const RECENT_REGISTRATIONS_STORAGE_KEY = 'recent_matched_plate_registrations';
 const INVALID_OCR_DEDUPLICATION_KEY = '__INVALID_OCR_RESULT__';
@@ -153,6 +154,7 @@ export default function HomeScreen() {
   const [isScreenFocused, setIsScreenFocused] = useState(false);
   const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active');
   const [scannerSettings, setScannerSettings] = useState<ScannerSettings>(DEFAULT_SCANNER_SETTINGS);
+  const [bypassRegistrationsEnabled, setBypassRegistrationsEnabled] = useState(false);
   const [detectionEvidence, setDetectionEvidence] = useState<DetectionEvidence | null>(null);
   const [evidenceImageLoaded, setEvidenceImageLoaded] = useState(false);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -165,6 +167,7 @@ export default function HomeScreen() {
   const evidenceCaptureInProgressRef = useRef(false);
   const evidenceCaptureFrameRef = useRef<number | null>(null);
   const saveDetectionImageRef = useRef(false);
+  const bypassRegistrationsRef = useRef(false);
   const standardToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const customToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const zoomIndexRef = useRef(0);
@@ -369,6 +372,17 @@ customToastTimeoutRef.current = setTimeout(() => setCustomToast(null), duration)
     }
   };
 
+  const loadBypassRegistrationsSetting = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(BYPASS_REGISTRATIONS_STORAGE_KEY);
+      const enabled = stored === 'true';
+      bypassRegistrationsRef.current = enabled;
+      setBypassRegistrationsEnabled(enabled);
+    } catch (error) {
+      console.error('Error loading bypass registrations setting:', error);
+    }
+  };
+
   const scheduleDetectionEvidence = async (
     photoUri: string,
     photoWidth: number,
@@ -484,6 +498,14 @@ customToastTimeoutRef.current = setTimeout(() => setCustomToast(null), duration)
   };
 
 const saveDetectionForMainList = async (plate: string) => {
+    if (bypassRegistrationsRef.current) {
+      setScannedPlates((current) => [
+        { plate, isInRegistry: plate in importedPlatesRef.current },
+        ...current,
+      ]);
+      return;
+    }
+
 const entries = await readAllDetectedPlates();
 const now = Date.now();
 const nextEntries = [...entries, { plate, timestamp: now }];
@@ -584,7 +606,7 @@ return;
 
 const location = await getFreshLocationForRegistration();
 
-      if (location) {
+      if (location && !bypassRegistrationsRef.current) {
         await saveMatchedPlateWithLocation(detectedPlate, location);
       }
 
@@ -764,6 +786,7 @@ console.error('Error during scan:', error);
 void loadNotificationSettings();
 void loadOperationalSettings();
 void loadSaveDetectionImageSetting();
+void loadBypassRegistrationsSetting();
       void loadRecentDetections();
 void loadImportedPlates();
       void loadScannedPlates();
@@ -878,10 +901,20 @@ void loadImportedPlates();
       <View style={styles.overlayContainer} pointerEvents="box-none">
         <View style={[styles.focusFrame, { borderColor: frameColor === 'blue' ? '#007AFF' : '#FF3B30' }]} pointerEvents="none" />
 
-        <View style={[styles.gpsBadge, { borderColor: gpsPresentation.color }]} pointerEvents="none">
-          <MaterialIcons name={gpsPresentation.icon} size={16} color={gpsPresentation.color} />
-          <Text style={[styles.gpsBadgeText, { color: gpsPresentation.color }]}>{gpsPresentation.label}</Text>
+        <View style={styles.statusBadges} pointerEvents="none">
+          <View style={[styles.gpsBadge, { borderColor: gpsPresentation.color }]}>
+            <MaterialIcons name={gpsPresentation.icon} size={16} color={gpsPresentation.color} />
+            <Text style={[styles.gpsBadgeText, { color: gpsPresentation.color }]}>{gpsPresentation.label}</Text>
+          </View>
+
+          {bypassRegistrationsEnabled && (
+            <View style={styles.bypassBadge}>
+              <MaterialIcons name="visibility-off" size={15} color="white" />
+              <Text style={styles.bypassBadgeText}>Bypass</Text>
+            </View>
+          )}
         </View>
+
         <Text style={styles.versionLabel} pointerEvents="none">v{APP_VERSION}</Text>
 
         {standardToast && (
@@ -1072,8 +1105,11 @@ const styles = StyleSheet.create({
   overlayContainer: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent' },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 20 },
   focusFrame: { position: 'absolute', top: '25%', left: '10%', right: '10%', height: 120, borderWidth: 3, borderRadius: 12, backgroundColor: 'transparent' },
-  gpsBadge: { position: 'absolute', top: 14, left: 16, flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 6, paddingHorizontal: 9, borderWidth: 1, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.65)', zIndex: 100 },
+  statusBadges: { position: 'absolute', top: 14, left: 16, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 100 },
+  gpsBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 6, paddingHorizontal: 9, borderWidth: 1, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.65)' },
   gpsBadgeText: { fontSize: 12, fontWeight: '700' },
+  bypassBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 6, paddingHorizontal: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)', borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.65)' },
+  bypassBadgeText: { color: 'white', fontSize: 11, fontWeight: '700' },
   versionLabel: { position: 'absolute', top: 20, right: 16, color: 'white', fontSize: 12, fontWeight: '600', opacity: 0.4 },
   standardToast: { position: 'absolute', top: 58, alignSelf: 'center', maxWidth: '86%', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20, zIndex: 100 },
   customToast: { position: 'absolute', top: 116, alignSelf: 'center', maxWidth: '86%', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20, zIndex: 101, backgroundColor: '#FF3B30' },
