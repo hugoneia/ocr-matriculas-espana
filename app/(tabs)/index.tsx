@@ -523,14 +523,35 @@ await AsyncStorage.setItem(ALL_DETECTIONS_STORAGE_KEY, JSON.stringify(nextEntrie
     const date = now.toLocaleDateString('es-ES');
     const time = now.toLocaleTimeString('es-ES', { hour12: false });
     const coordinates = `${location.coords.latitude},${location.coords.longitude}`;
-    const entry = `${plate},${date},${time},"${coordinates}"\n`;
+    const entry = `${plate},${date},${time},"${coordinates}",OK\n`;
 
     let currentContent = '';
     if ((await matchedFile.info()).exists) {
       currentContent = await matchedFile.text();
+
+      const lines = currentContent
+        .split('\n')
+        .filter((line) => line.trim() !== '');
+
+      if (lines.length > 0) {
+        const normalizedRows = lines.slice(1).map((line) => {
+          const match = line.match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"(?:,([^,]*))?$/);
+          if (!match) return line;
+
+          const [, rawPlate = '', rawDate = '', rawTime = '', rawCoordinates = '', rawPlace = 'OK'] = match;
+          const place = rawPlace.trim().replace(/"/g, '') || 'OK';
+
+          return `${rawPlate},${rawDate},${rawTime},"${rawCoordinates}",${place}`;
+        });
+
+        currentContent = [
+          'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD,LUGAR',
+          ...normalizedRows,
+        ].join('\n') + '\n';
+      }
     } else {
       await matchedFile.create();
-      currentContent = 'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD\n';
+      currentContent = 'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD,LUGAR\n';
     }
 
     await matchedFile.write(currentContent + entry);

@@ -162,7 +162,7 @@ export default function RegistrosScreen() {
         .filter(Boolean)
         .slice(1)
         .map((line) => {
-          const match = line.match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"$/);
+          const match = line.match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"(?:,([^,]*))?$/);
           if (!match) return null;
 
           const [, rawPlate = '', rawDate = '', rawTime = '', rawCoordinates = ''] = match;
@@ -282,11 +282,11 @@ export default function RegistrosScreen() {
       const importedRows: string[] = [];
 
       for (let i = firstRowIsHeader ? 1 : 0; i < lines.length; i += 1) {
-        const match = lines[i].match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"$/);
+        const match = lines[i].match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"(?:,([^,]*))?$/);
 
         if (!match) continue;
 
-        const [, rawPlate = '', rawDate = '', rawTime = '', rawCoordinates = ''] = match;
+        const [, rawPlate = '', rawDate = '', rawTime = '', rawCoordinates = '', rawPlace = 'OK'] = match;
         const plate = rawPlate.trim().replace(/"/g, '').toUpperCase();
         const date = rawDate.trim().replace(/"/g, '');
         const time = rawTime.trim().replace(/"/g, '');
@@ -305,8 +305,10 @@ export default function RegistrosScreen() {
           continue;
         }
 
+        const place = rawPlace.trim().replace(/"/g, '') || 'OK';
+
         importedRows.push(
-          `${plate},${date},${time},"${latitude},${longitude}"`,
+          `${plate},${date},${time},"${latitude},${longitude}",${place}`,
         );
       }
 
@@ -326,7 +328,7 @@ export default function RegistrosScreen() {
       }
 
       if (!currentContent.trim()) {
-        currentContent = 'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD\n';
+        currentContent = 'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD,LUGAR\n';
       }
 
       const existingLines = currentContent
@@ -335,7 +337,7 @@ export default function RegistrosScreen() {
         .split('\n')
         .filter((line) => line.trim() !== '');
 
-      const header = existingLines[0] ?? 'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD';
+      const header = existingLines[0] ?? 'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD,LUGAR';
       const existingRows = existingLines.slice(1);
 
       const existingSet = new Set(existingRows);
@@ -438,7 +440,7 @@ export default function RegistrosScreen() {
               const dataLines = lines.slice(1).filter((line) => line.trim() !== '');
 
               const targetIndex = dataLines.findIndex((line) => {
-                const match = line.match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"$/);
+                const match = line.match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"(?:,([^,]*))?$/);
                 if (!match) return false;
 
                 const [, rawPlate = '', rawDate = '', rawTime = '', rawCoordinates = ''] = match;
