@@ -5,18 +5,19 @@ import MapView, {
   type Region,
 } from "react-native-maps";
 import * as FileSystem from "expo-file-system/legacy";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Alert,
   FlatList,
-  KeyboardAvoidingView,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+
+import { useFocusEffect } from "expo-router";
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
 import { ScreenContainer } from "@/components/screen-container";
 
@@ -112,7 +113,9 @@ function parseCsvLine(line: string, rowIndex: number): CsvRecord | null {
 }
 
 const EARTH_RADIUS_METERS = 6371000;
-const NEARBY_RADIUS_METERS = 15;
+const NEARBY_RADIUS_METERS = 10;
+const MARKER_GREEN = "#22C55E";
+const MARKER_CLOSE_ZOOM_LATITUDE_DELTA = 0.004;
 
 function distanceInMeters(a: Coordinate, b: Coordinate): number {
   const latitude1 = (a.latitude * Math.PI) / 180;
@@ -163,10 +166,11 @@ export default function MapaScreen() {
     useState<CoordinateGroup | null>(null);
 
   const [saving, setSaving] = useState(false);
+  const [mapLatitudeDelta, setMapLatitudeDelta] = useState(0.08);
 
   const mapType = selectedRecord ? "satellite" : "standard";
 
-  const loadRecords = async () => {
+  const loadRecords = useCallback(async () => {
     try {
       const info = await FileSystem.getInfoAsync(CSV_FILE);
 
@@ -200,11 +204,13 @@ export default function MapaScreen() {
     } finally {
       setLoaded(true);
     }
-  };
-
-  useEffect(() => {
-    void loadRecords();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadRecords();
+    }, [loadRecords]),
+  );
 
   const filteredRecords = useMemo(() => {
     if (!selectedPlate) {
@@ -335,8 +341,8 @@ export default function MapaScreen() {
         {
           latitude: record.coordinate.latitude,
           longitude: record.coordinate.longitude,
-          latitudeDelta: 0.005,
-          longitudeDelta: 0.005,
+          latitudeDelta: 0.001,
+          longitudeDelta: 0.001,
         },
         350
       );
@@ -586,13 +592,15 @@ export default function MapaScreen() {
             initialRegion={initialRegion ?? undefined}
             provider={PROVIDER_GOOGLE}
             onMapReady={handleMapLoaded}
+            onRegionChangeComplete={(region) => {
+              setMapLatitudeDelta(region.latitudeDelta);
+            }}
           >
             {!selectedRecord &&
               groups.map((group) => (
                 <Marker
                   key={group.key}
                   coordinate={group.coordinate}
-                  pinColor="green"
                   title={
                     group.records.length === 1
                       ? group.records[0].plate
@@ -604,41 +612,48 @@ export default function MapaScreen() {
                       : "Pulsa para seleccionar un registro"
                   }
                   onPress={() => handleMarkerPress(group)}
-                />
+                >
+                  {mapLatitudeDelta <= MARKER_CLOSE_ZOOM_LATITUDE_DELTA ? (
+                    <MaterialIcons
+                      name="fmd-good"
+                      size={25}
+                      color={MARKER_GREEN}
+                    />
+                  ) : (
+                    <View style={styles.markerBullet} />
+                  )}
+                </Marker>
               ))}
 
             {selectedRecord && currentCoordinate && (
               <Marker
                 coordinate={currentCoordinate}
-                pinColor="green"
                 draggable
                 title={selectedRecord.plate}
                 description="Arrastra el marcador para ajustar la ubicación"
                 onDragEnd={handleDragEnd}
-              />
+              >
+                <MaterialIcons
+                  name="fmd-good"
+                  size={28}
+                  color={MARKER_GREEN}
+                />
+              </Marker>
             )}
           </MapView>
         )}
-      </View>
 
-      <Modal
-        visible={selectionGroup !== null}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSelectionGroup(null)}
-      >
+      {selectionGroup && (
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Seleccionar registro</Text>
 
-            {selectionGroup && (
-              <Text style={styles.modalSubtitle}>
-                {selectionGroup.records.length} registros en esta ubicación
-              </Text>
-            )}
+            <Text style={styles.modalSubtitle}>
+              {selectionGroup.records.length} registros en esta ubicación
+            </Text>
 
             <FlatList
-              data={selectionGroup?.records ?? []}
+              data={selectionGroup.records}
               keyExtractor={(item) => `${item.rowIndex}-${item.originalLine}`}
               renderItem={({ item }) => (
                 <Pressable
@@ -661,7 +676,7 @@ export default function MapaScreen() {
             </Pressable>
           </View>
         </View>
-      </Modal>
+      )}
       </View>
     </ScreenContainer>
   );
@@ -804,7 +819,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   saveButton: {
-    backgroundColor: "#16803c",
+    backgroundColor: "#007AFF",
   },
   saveButtonText: {
     color: "#fff",
@@ -813,6 +828,14 @@ const styles = StyleSheet.create({
   mapContainer: {
     flex: 1,
     position: "relative",
+  },
+  markerBullet: {
+    width: 9,
+    height: 9,
+    borderRadius: 999,
+    backgroundColor: "#22C55E",
+    borderWidth: 1.5,
+    borderColor: "#fff",
   },
   emptyState: {
     flex: 1,
@@ -832,9 +855,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   modalBackdrop: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.45)",
     justifyContent: "flex-end",
+    zIndex: 20,
   },
   modalCard: {
     maxHeight: "75%",
@@ -871,6 +895,7 @@ const styles = StyleSheet.create({
   },
   modalClose: {
     marginTop: 12,
+    marginBottom: 16,
     minHeight: 44,
     borderRadius: 9,
     backgroundColor: "#eee",
