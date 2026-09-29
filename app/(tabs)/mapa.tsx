@@ -601,6 +601,7 @@ export default function MapaScreen() {
                 <Marker
                   key={group.key}
                   coordinate={group.coordinate}
+                  anchor={{ x: 0.5, y: 0.5 }}
                   title={
                     group.records.length === 1
                       ? group.records[0].plate
@@ -831,8 +832,8 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   markerBullet: {
-    width: 9,
-    height: 9,
+    width: 11,
+    height: 11,
     borderRadius: 999,
     backgroundColor: "#22C55E",
     borderWidth: 1.5,
