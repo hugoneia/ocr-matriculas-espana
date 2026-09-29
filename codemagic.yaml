@@ -95,6 +95,13 @@ workflows:
           NODE
       - name: Generar proyecto Android
         script: |
+          if [ -n "$GOOGLE_MAPS_API_KEY" ]; then
+            echo "OK: GOOGLE_MAPS_API_KEY está disponible en el entorno de build."
+          else
+            echo "ERROR: GOOGLE_MAPS_API_KEY NO está disponible en el entorno de build."
+            exit 1
+          fi
+
           npx expo prebuild --platform android
       - name: Comprobar bundle JavaScript
         script: |
