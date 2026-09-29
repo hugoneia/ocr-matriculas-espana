@@ -122,24 +122,24 @@ workflows:
 
           echo "SHA-256 de la API key presente en AndroidManifest:"
           python - <<'PY2'
-from pathlib import Path
-import re
-import hashlib
+          from pathlib import Path
+          import re
+          import hashlib
 
-manifest = Path("android/app/src/main/AndroidManifest.xml").read_text()
+          manifest = Path("android/app/src/main/AndroidManifest.xml").read_text()
 
-match = re.search(
-    r'<meta-data[^>]*android:name="com\.google\.android\.geo\.API_KEY"[^>]*android:value="([^"]*)"',
-    manifest,
-)
+          match = re.search(
+              r'<meta-data[^>]*android:name="com\.google\.android\.geo\.API_KEY"[^>]*android:value="([^"]*)"',
+              manifest,
+          )
 
-if not match:
-    print("ERROR: no se encontró el valor de com.google.android.geo.API_KEY")
-else:
-    value = match.group(1)
-    print(hashlib.sha256(value.encode()).hexdigest())
-    print(f"Longitud de la API key del Manifest: {len(value)}")
-PY2
+          if not match:
+              print("ERROR: no se encontró el valor de com.google.android.geo.API_KEY")
+          else:
+              value = match.group(1)
+              print(hashlib.sha256(value.encode()).hexdigest())
+              print(f"Longitud de la API key del Manifest: {len(value)}")
+          PY2
 
           echo "===== AndroidManifest: comprobación de Google Maps ====="
 
