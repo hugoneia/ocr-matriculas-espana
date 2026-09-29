@@ -104,35 +104,27 @@ workflows:
             exit 1
           fi
 
-          echo "===== Expo config: comprobación de Google Maps en Codemagic ====="
-          node <<'NODE'
-          const { execFileSync } = require("child_process");
-
-          const output = execFileSync(
-            "npx",
-            ["expo", "config", "--type", "public", "--json"],
-            { encoding: "utf8" }
-          );
-
-          const config = JSON.parse(output);
-          const android = config.android || {};
-          const googleMaps = (android.config || {}).googleMaps || {};
-          const apiKey = googleMaps.apiKey;
-
-          console.log("android.config.googleMaps existe:", Boolean(android.config && android.config.googleMaps));
-          console.log("android.config.googleMaps.apiKey existe:", "apiKey" in googleMaps);
-          console.log("android.config.googleMaps.apiKey tiene valor:", Boolean(apiKey));
-
-          if (apiKey) {
-            console.log("Longitud de apiKey:", String(apiKey).length);
-            console.log("Prefijo de apiKey:", String(apiKey).slice(0, 4) + "...");
-          }
-
-          console.log("package:", android.package);
-          console.log("versionCode:", android.versionCode);
-          NODE
-
           npx expo prebuild --platform android
+
+          echo "===== AndroidManifest: comprobación de Google Maps ====="
+
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "ERROR: no existe $MANIFEST"
+            exit 1
+          fi
+
+          if grep -q 'com.google.android.geo.API_KEY' "$MANIFEST"; then
+            echo "OK: AndroidManifest contiene com.google.android.geo.API_KEY."
+          else
+            echo "ERROR: AndroidManifest NO contiene com.google.android.geo.API_KEY."
+          fi
+
+          if grep -q 'com.google.android.geo.API_KEY' "$MANIFEST"; then
+            echo "===== Contexto de la metadata Google Maps ====="
+            grep -B 2 -A 2 'com.google.android.geo.API_KEY' "$MANIFEST" | sed -E 's/(android:value=")[^"]*"/\1[OCULTO]"/g'
+          fi
       - name: Comprobar bundle JavaScript
         script: |
           NODE_ENV=production npx expo export --platform android
