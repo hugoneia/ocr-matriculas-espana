@@ -1,5 +1,6 @@
 import MapView, {
   Marker,
+  PROVIDER_GOOGLE,
   type MapMarkerDragEvent,
   type Region,
 } from "react-native-maps";
@@ -583,6 +584,7 @@ export default function MapaScreen() {
             style={StyleSheet.absoluteFill}
             mapType={mapType}
             initialRegion={initialRegion ?? undefined}
+            provider={PROVIDER_GOOGLE}
             onMapReady={handleMapLoaded}
           >
             {!selectedRecord &&
