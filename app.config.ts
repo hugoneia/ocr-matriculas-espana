@@ -38,19 +38,6 @@ const env = {
   androidPackage: bundleId,
 };
 
-console.error("===== app.config.ts: diagnóstico Google Maps =====");
-console.error("app.config.ts se está ejecutando: true");
-console.error(
-  "GOOGLE_MAPS_API_KEY existe en process.env:",
-  Boolean(process.env.GOOGLE_MAPS_API_KEY)
-);
-console.error(
-  "GOOGLE_MAPS_API_KEY tiene longitud:",
-  process.env.GOOGLE_MAPS_API_KEY
-    ? process.env.GOOGLE_MAPS_API_KEY.length
-    : 0
-);
-
 const config: ExpoConfig = {
   name: env.appName,
   slug: env.appSlug,
