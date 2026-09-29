@@ -17,6 +17,8 @@ import {
   View,
 } from "react-native";
 
+import { ScreenContainer } from "@/components/screen-container";
+
 type Coordinate = {
   latitude: number;
   longitude: number;
@@ -452,7 +454,8 @@ export default function MapaScreen() {
   const currentCoordinate = editingCoordinate ?? selectedRecord?.coordinate;
 
   return (
-    <View style={styles.container}>
+    <ScreenContainer className="flex-1 p-4">
+      <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Mapa</Text>
 
@@ -657,7 +660,8 @@ export default function MapaScreen() {
           </View>
         </View>
       </Modal>
-    </View>
+      </View>
+    </ScreenContainer>
   );
 }
 
@@ -665,6 +669,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#fff",
+    borderRadius: 12,
+    overflow: "hidden",
   },
   header: {
     paddingHorizontal: 16,

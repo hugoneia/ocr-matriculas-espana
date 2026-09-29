@@ -17,6 +17,7 @@ const MAPPING = {
   "house.fill": "home",
   "camera.fill": "photo-camera",
   "list.bullet.rectangle": "format-list-bulleted",
+  "map.fill": "map",
   "paperplane.fill": "send",
   "gearshape.fill": "settings",
   "chevron.left.forwardslash.chevron.right": "code",
