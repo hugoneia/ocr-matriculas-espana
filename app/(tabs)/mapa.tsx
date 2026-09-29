@@ -642,6 +642,7 @@ export default function MapaScreen() {
             )}
           </MapView>
         )}
+      </View>
 
       {selectionGroup && (
         <View style={styles.modalBackdrop}>
