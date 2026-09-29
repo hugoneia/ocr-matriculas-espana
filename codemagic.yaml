@@ -6,6 +6,8 @@ workflows:
     environment:
       node: 20
       java: 17
+      groups:
+        - OCR_MATRICULAS_SECRETS
     scripts:
       - name: Instalar dependencias
         script: |
