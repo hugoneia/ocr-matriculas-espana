@@ -19,6 +19,7 @@ import {
 import { useFocusEffect } from "expo-router";
 
 import { ScreenContainer } from "@/components/screen-container";
+import { MaterialIcons } from "@expo/vector-icons";
 
 type Coordinate = {
   latitude: number;
@@ -165,8 +166,8 @@ export default function MapaScreen() {
 
   const [saving, setSaving] = useState(false);
   const [mapLatitudeDelta, setMapLatitudeDelta] = useState(0.08);
-
-  const mapType = selectedRecord ? "satellite" : "standard";
+  const [mapType, setMapType] = useState<"standard" | "satellite">("standard");
+  const mapTypeBeforeEditingRef = useRef<"standard" | "satellite">("standard");
 
   const loadRecords = useCallback(async () => {
     try {
@@ -331,6 +332,8 @@ export default function MapaScreen() {
 
   const startEditing = (record: CsvRecord) => {
     setSelectionGroup(null);
+    mapTypeBeforeEditingRef.current = mapType;
+    setMapType("satellite");
     setSelectedRecord(record);
     setEditingCoordinate(record.coordinate);
 
@@ -350,6 +353,7 @@ export default function MapaScreen() {
   const cancelEditing = () => {
     setSelectedRecord(null);
     setEditingCoordinate(null);
+    setMapType(mapTypeBeforeEditingRef.current);
 
     requestAnimationFrame(() => {
       if (mapRef.current && groups.length > 0) {
@@ -423,6 +427,7 @@ export default function MapaScreen() {
 
       setSelectedRecord(null);
       setEditingCoordinate(null);
+      setMapType(mapTypeBeforeEditingRef.current);
 
       await loadRecords();
 
@@ -636,6 +641,25 @@ export default function MapaScreen() {
             )}
           </MapView>
         )}
+
+        {!selectedRecord && loaded && groups.length > 0 && (
+          <Pressable
+            onPress={() =>
+              setMapType((current) =>
+                current === "standard" ? "satellite" : "standard"
+              )
+            }
+            accessibilityRole="button"
+            accessibilityLabel={
+              mapType === "standard"
+                ? "Cambiar a mapa satélite"
+                : "Cambiar a mapa estándar"
+            }
+            style={styles.mapTypeButton}
+          >
+            <MaterialIcons name="layers" size={24} color="#333" />
+          </Pressable>
+        )}
       </View>
 
       {selectionGroup && (
@@ -823,6 +847,25 @@ const styles = StyleSheet.create({
   mapContainer: {
     flex: 1,
     position: "relative",
+  },
+  mapTypeButton: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
   },
   emptyState: {
     flex: 1,
