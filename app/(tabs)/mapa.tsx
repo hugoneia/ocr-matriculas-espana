@@ -17,7 +17,6 @@ import {
 } from "react-native";
 
 import { useFocusEffect } from "expo-router";
-import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
 import { ScreenContainer } from "@/components/screen-container";
 
@@ -114,7 +113,6 @@ function parseCsvLine(line: string, rowIndex: number): CsvRecord | null {
 
 const EARTH_RADIUS_METERS = 6371000;
 const NEARBY_RADIUS_METERS = 10;
-const MARKER_GREEN = "#22C55E";
 const MARKER_CLOSE_ZOOM_LATITUDE_DELTA = 0.004;
 
 function distanceInMeters(a: Coordinate, b: Coordinate): number {
@@ -601,7 +599,16 @@ export default function MapaScreen() {
                 <Marker
                   key={group.key}
                   coordinate={group.coordinate}
-                  anchor={{ x: 0.5, y: 1 }}
+                  anchor={
+                    mapLatitudeDelta <= MARKER_CLOSE_ZOOM_LATITUDE_DELTA
+                      ? { x: 0.5, y: 1 }
+                      : { x: 0.5, y: 0.5 }
+                  }
+                  image={
+                    mapLatitudeDelta <= MARKER_CLOSE_ZOOM_LATITUDE_DELTA
+                      ? require("../../assets/images/map-marker-pin.png")
+                      : require("../../assets/images/map-marker-bullet.png")
+                  }
                   title={
                     group.records.length === 1
                       ? group.records[0].plate
@@ -613,39 +620,19 @@ export default function MapaScreen() {
                       : "Pulsa para seleccionar un registro"
                   }
                   onPress={() => handleMarkerPress(group)}
-                >
-                  {mapLatitudeDelta <= MARKER_CLOSE_ZOOM_LATITUDE_DELTA ? (
-                    <MaterialIcons
-                      name="fmd-good"
-                      size={25}
-                      color={MARKER_GREEN}
-                    />
-                  ) : (
-                    <View
-                      collapsable={false}
-                      style={[
-                        styles.markerBullet,
-                        { transform: [{ translateY: 5.5 }] },
-                      ]}
-                    />
-                  )}
-                </Marker>
+                />
               ))}
 
             {selectedRecord && currentCoordinate && (
               <Marker
                 coordinate={currentCoordinate}
                 draggable
+                anchor={{ x: 0.5, y: 1 }}
+                image={require("../../assets/images/map-marker-pin.png")}
                 title={selectedRecord.plate}
                 description="Arrastra el marcador para ajustar la ubicación"
                 onDragEnd={handleDragEnd}
-              >
-                <MaterialIcons
-                  name="fmd-good"
-                  size={28}
-                  color={MARKER_GREEN}
-                />
-              </Marker>
+              />
             )}
           </MapView>
         )}
@@ -836,14 +823,6 @@ const styles = StyleSheet.create({
   mapContainer: {
     flex: 1,
     position: "relative",
-  },
-  markerBullet: {
-    width: 11,
-    height: 11,
-    borderRadius: 999,
-    backgroundColor: "#22C55E",
-    borderWidth: 1.5,
-    borderColor: "#fff",
   },
   emptyState: {
     flex: 1,
