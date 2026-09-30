@@ -601,7 +601,7 @@ export default function MapaScreen() {
                 <Marker
                   key={group.key}
                   coordinate={group.coordinate}
-                  anchor={{ x: 0.5, y: 0.5 }}
+                  anchor={{ x: 0.5, y: 1 }}
                   title={
                     group.records.length === 1
                       ? group.records[0].plate
@@ -623,7 +623,10 @@ export default function MapaScreen() {
                   ) : (
                     <View
                       collapsable={false}
-                      style={styles.markerBullet}
+                      style={[
+                        styles.markerBullet,
+                        { transform: [{ translateY: 5.5 }] },
+                      ]}
                     />
                   )}
                 </Marker>
