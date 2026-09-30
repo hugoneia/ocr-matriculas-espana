@@ -621,7 +621,10 @@ export default function MapaScreen() {
                       color={MARKER_GREEN}
                     />
                   ) : (
-                    <View style={styles.markerBullet} />
+                    <View
+                      collapsable={false}
+                      style={styles.markerBullet}
+                    />
                   )}
                 </Marker>
               ))}
