@@ -253,7 +253,26 @@ export default function RegistrosScreen() {
     }
   };
 
-  const handleImportDetectionRecords = async () => {
+  const handleImportDetectionRecords = () => {
+    Alert.alert(
+      'Importar registros',
+      'Los registros del CSV se añadirán a los registros existentes. Los registros actuales no serán sustituidos ni modificados. ¿Deseas continuar?',
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Aceptar',
+          onPress: () => {
+            void importDetectionRecords();
+          },
+        },
+      ],
+    );
+  };
+
+  const importDetectionRecords = async () => {
     try {
       setIsLoading(true);
 
@@ -340,17 +359,32 @@ export default function RegistrosScreen() {
       const header = existingLines[0] ?? 'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD,LUGAR';
       const existingRows = existingLines.slice(1);
 
-      const existingSet = new Set(existingRows);
+      const getDetectionKey = (row: string) => {
+        const parts = row.split(',');
+        if (parts.length < 3) {
+          return row;
+        }
+
+        return [
+          parts[0].trim().toUpperCase(),
+          parts[1].trim(),
+          parts[2].trim(),
+        ].join('|');
+      };
+
+      const existingSet = new Set(existingRows.map(getDetectionKey));
       let importedCount = 0;
       let duplicateCount = 0;
 
       for (const row of importedRows) {
-        if (existingSet.has(row)) {
+        const detectionKey = getDetectionKey(row);
+
+        if (existingSet.has(detectionKey)) {
           duplicateCount += 1;
           continue;
         }
 
-        existingSet.add(row);
+        existingSet.add(detectionKey);
         existingRows.push(row);
         importedCount += 1;
       }

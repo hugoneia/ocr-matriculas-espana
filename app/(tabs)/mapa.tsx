@@ -462,6 +462,7 @@ export default function MapaScreen() {
   };
 
   const currentCoordinate = editingCoordinate ?? selectedRecord?.coordinate;
+  const lastRecord = records.length > 0 ? records[records.length - 1] : null;
 
   return (
     <ScreenContainer className="flex-1 p-4">
@@ -594,6 +595,8 @@ export default function MapaScreen() {
             mapType={mapType}
             initialRegion={initialRegion ?? undefined}
             provider={PROVIDER_GOOGLE}
+            showsUserLocation
+            showsMyLocationButton={false}
             onMapReady={handleMapLoaded}
             onRegionChangeComplete={(region) => {
               setMapLatitudeDelta(region.latitudeDelta);
@@ -612,7 +615,9 @@ export default function MapaScreen() {
                   image={
                     mapLatitudeDelta <= MARKER_CLOSE_ZOOM_LATITUDE_DELTA
                       ? require("../../assets/images/map-marker-pin.png")
-                      : require("../../assets/images/map-marker-bullet.png")
+                      : lastRecord?.rowIndex === group.records[0].rowIndex
+                        ? require("../../assets/images/map-marker-bullet-last.png")
+                        : require("../../assets/images/map-marker-bullet.png")
                   }
                   title={
                     group.records.length === 1
