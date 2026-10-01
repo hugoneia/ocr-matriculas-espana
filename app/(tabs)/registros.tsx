@@ -12,6 +12,7 @@ import { ScreenContainer } from '@/components/screen-container';
 
 const IMPORTED_PLATES_STORAGE_KEY = 'imported_plates';
 const ALL_DETECTIONS_STORAGE_KEY = 'all_scanned_plate_detections';
+const MAP_NEW_RECORD_KEYS_STORAGE_KEY = 'map_new_record_keys';
 const PLATES_FILE_NAME = 'matriculas_detectadas.csv';
 
 const getPlatesFile = () => new File(Paths.document, PLATES_FILE_NAME);
@@ -373,6 +374,7 @@ export default function RegistrosScreen() {
       };
 
       const existingSet = new Set(existingRows.map(getDetectionKey));
+      const newlyImportedKeys: string[] = [];
       let importedCount = 0;
       let duplicateCount = 0;
 
@@ -386,10 +388,46 @@ export default function RegistrosScreen() {
 
         existingSet.add(detectionKey);
         existingRows.push(row);
+        newlyImportedKeys.push(detectionKey);
         importedCount += 1;
       }
 
       await platesFile.write(`${[header, ...existingRows].join('\n')}\n`);
+
+      if (newlyImportedKeys.length > 0) {
+        try {
+          const storedNewRecordKeys = await AsyncStorage.getItem(
+            MAP_NEW_RECORD_KEYS_STORAGE_KEY,
+          );
+
+          let storedKeys: string[] = [];
+
+          if (storedNewRecordKeys) {
+            const parsedKeys = JSON.parse(storedNewRecordKeys);
+
+            if (Array.isArray(parsedKeys)) {
+              storedKeys = parsedKeys.filter(
+                (key): key is string => typeof key === 'string',
+              );
+            }
+          }
+
+          const mergedKeys = Array.from(
+            new Set([...storedKeys, ...newlyImportedKeys]),
+          );
+
+          await AsyncStorage.setItem(
+            MAP_NEW_RECORD_KEYS_STORAGE_KEY,
+            JSON.stringify(mergedKeys),
+          );
+        } catch (error) {
+          console.warn(
+            'Los registros se importaron, pero no se pudo guardar su estado de nuevos en el mapa:',
+            error,
+          );
+        }
+      }
+
       await FileSystem.deleteAsync(tempUri, { idempotent: true });
 
       await loadScannedPlates();

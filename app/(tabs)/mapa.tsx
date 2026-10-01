@@ -5,6 +5,7 @@ import MapView, {
   type Region,
 } from "react-native-maps";
 import * as FileSystem from "expo-file-system/legacy";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -46,6 +47,15 @@ type CoordinateGroup = {
 const CSV_FILE = `${FileSystem.documentDirectory}matriculas_detectadas.csv`;
 
 const CSV_HEADER = "MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD,LUGAR";
+const NEW_RECORD_KEYS_STORAGE_KEY = "map_new_record_keys";
+
+function getRecordKey(record: Pick<CsvRecord, "plate" | "date" | "time">) {
+  return [
+    record.plate.trim().toUpperCase(),
+    record.date.trim(),
+    record.time.trim(),
+  ].join("|");
+}
 
 function parseCoordinate(value: string): Coordinate | null {
   const match = value.trim().match(
@@ -113,8 +123,10 @@ function parseCsvLine(line: string, rowIndex: number): CsvRecord | null {
 }
 
 const EARTH_RADIUS_METERS = 6371000;
-const NEARBY_RADIUS_METERS = 10;
+const NEARBY_RADIUS_METERS = 5;
 const MARKER_CLOSE_ZOOM_LATITUDE_DELTA = 0.004;
+const EDITING_MAX_LATITUDE_DELTA = 0.001;
+const EDITING_MAX_LONGITUDE_DELTA = 0.001;
 
 function distanceInMeters(a: Coordinate, b: Coordinate): number {
   const latitude1 = (a.latitude * Math.PI) / 180;
@@ -166,6 +178,8 @@ export default function MapaScreen() {
 
   const [saving, setSaving] = useState(false);
   const [mapLatitudeDelta, setMapLatitudeDelta] = useState(0.08);
+  const [mapLongitudeDelta, setMapLongitudeDelta] = useState(0.08);
+  const [newRecordKeys, setNewRecordKeys] = useState<Set<string>>(new Set());
   const [mapType, setMapType] = useState<"standard" | "satellite">("standard");
   const mapTypeBeforeEditingRef = useRef<"standard" | "satellite">("standard");
 
@@ -196,6 +210,46 @@ export default function MapaScreen() {
       }
 
       setRecords(parsed);
+
+      try {
+        const storedNewRecordKeys = await AsyncStorage.getItem(
+          NEW_RECORD_KEYS_STORAGE_KEY,
+        );
+
+        if (storedNewRecordKeys) {
+          const parsedKeys = JSON.parse(storedNewRecordKeys);
+
+          if (Array.isArray(parsedKeys)) {
+            const validKeys = new Set(
+              parsed.map((record) => getRecordKey(record)),
+            );
+
+            const cleanedKeys = parsedKeys.filter(
+              (key): key is string =>
+                typeof key === "string" && validKeys.has(key),
+            );
+
+            setNewRecordKeys(new Set(cleanedKeys));
+
+            if (cleanedKeys.length !== parsedKeys.length) {
+              await AsyncStorage.setItem(
+                NEW_RECORD_KEYS_STORAGE_KEY,
+                JSON.stringify(cleanedKeys),
+              );
+            }
+
+            return;
+          }
+        }
+
+        setNewRecordKeys(new Set());
+      } catch (error) {
+        console.warn(
+          "No se pudo cargar el estado de registros nuevos del mapa:",
+          error,
+        );
+        setNewRecordKeys(new Set());
+      }
     } catch (error) {
       console.error("Error cargando registros para el mapa:", error);
       Alert.alert("Mapa", "No se pudieron cargar los registros del CSV.");
@@ -332,6 +386,25 @@ export default function MapaScreen() {
 
   const startEditing = (record: CsvRecord) => {
     setSelectionGroup(null);
+
+    const recordKey = getRecordKey(record);
+
+    if (newRecordKeys.has(recordKey)) {
+      const nextKeys = new Set(newRecordKeys);
+      nextKeys.delete(recordKey);
+      setNewRecordKeys(nextKeys);
+
+      void AsyncStorage.setItem(
+        NEW_RECORD_KEYS_STORAGE_KEY,
+        JSON.stringify(Array.from(nextKeys)),
+      ).catch((error) => {
+        console.warn(
+          "No se pudo actualizar el estado de registro nuevo del mapa:",
+          error,
+        );
+      });
+    }
+
     mapTypeBeforeEditingRef.current = mapType;
     setMapType("satellite");
     setSelectedRecord(record);
@@ -342,10 +415,16 @@ export default function MapaScreen() {
         {
           latitude: record.coordinate.latitude,
           longitude: record.coordinate.longitude,
-          latitudeDelta: 0.001,
-          longitudeDelta: 0.001,
+          latitudeDelta: Math.min(
+            mapLatitudeDelta,
+            EDITING_MAX_LATITUDE_DELTA,
+          ),
+          longitudeDelta: Math.min(
+            mapLongitudeDelta,
+            EDITING_MAX_LONGITUDE_DELTA,
+          ),
         },
-        350
+        350,
       );
     });
   };
@@ -462,7 +541,6 @@ export default function MapaScreen() {
   };
 
   const currentCoordinate = editingCoordinate ?? selectedRecord?.coordinate;
-  const lastRecord = records.length > 0 ? records[records.length - 1] : null;
 
   return (
     <ScreenContainer className="flex-1 p-4">
@@ -597,9 +675,11 @@ export default function MapaScreen() {
             provider={PROVIDER_GOOGLE}
             showsUserLocation
             showsMyLocationButton={false}
+            moveOnMarkerPress={false}
             onMapReady={handleMapLoaded}
             onRegionChangeComplete={(region) => {
               setMapLatitudeDelta(region.latitudeDelta);
+              setMapLongitudeDelta(region.longitudeDelta);
             }}
           >
             {!selectedRecord &&
@@ -615,7 +695,7 @@ export default function MapaScreen() {
                   image={
                     mapLatitudeDelta <= MARKER_CLOSE_ZOOM_LATITUDE_DELTA
                       ? require("../../assets/images/map-marker-pin.png")
-                      : lastRecord?.rowIndex === group.records[0].rowIndex
+                      : newRecordKeys.has(getRecordKey(group.records[0]))
                         ? require("../../assets/images/map-marker-bullet-last.png")
                         : require("../../assets/images/map-marker-bullet.png")
                   }
@@ -679,17 +759,33 @@ export default function MapaScreen() {
             <FlatList
               data={selectionGroup.records}
               keyExtractor={(item) => `${item.rowIndex}-${item.originalLine}`}
-              renderItem={({ item }) => (
-                <Pressable
-                  onPress={() => startEditing(item)}
-                  style={styles.recordItem}
-                >
-                  <Text style={styles.recordPlate}>{item.plate}</Text>
-                  <Text style={styles.recordDetails}>
-                    {item.date} · {item.time}
-                  </Text>
-                </Pressable>
-              )}
+              renderItem={({ item }) => {
+                const isTappedRecord =
+                  selectionGroup.key === `${item.rowIndex}`;
+
+                return (
+                  <Pressable
+                    onPress={() => startEditing(item)}
+                    style={[
+                      styles.recordItem,
+                      isTappedRecord && styles.recordItemSelected,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.recordPlate,
+                        isTappedRecord && styles.recordPlateSelected,
+                      ]}
+                    >
+                      {isTappedRecord ? "➤ " : ""}
+                      {item.plate}
+                    </Text>
+                    <Text style={styles.recordDetails}>
+                      {item.date} · {item.time}
+                    </Text>
+                  </Pressable>
+                );
+              }}
             />
 
             <Pressable
@@ -915,13 +1011,23 @@ const styles = StyleSheet.create({
   },
   recordItem: {
     paddingVertical: 12,
+    paddingHorizontal: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#ddd",
+    borderRadius: 8,
+  },
+  recordItemSelected: {
+    backgroundColor: "#FFF0F0",
+    borderWidth: 1,
+    borderColor: "#FF3B30",
   },
   recordPlate: {
     fontSize: 16,
     fontWeight: "700",
     color: "#111",
+  },
+  recordPlateSelected: {
+    color: "#FF3B30",
   },
   recordDetails: {
     marginTop: 3,
