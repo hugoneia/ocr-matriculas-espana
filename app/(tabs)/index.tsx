@@ -21,6 +21,8 @@ const NOTIFICATION_RULES_STORAGE_KEY = 'notification_rules';
 const GLOBAL_NOTIFICATIONS_KEY = 'global_notifications_active';
 const SAVE_DETECTION_IMAGE_STORAGE_KEY = 'save_detection_image';
 const BYPASS_REGISTRATIONS_STORAGE_KEY = 'bypass_registrations';
+const MANUAL_GPS_ENABLED_STORAGE_KEY = 'manual_gps_enabled';
+const MANUAL_GPS_COORDINATES_STORAGE_KEY = 'manual_gps_coordinates';
 const ALL_DETECTIONS_STORAGE_KEY = 'all_scanned_plate_detections';
 const RECENT_REGISTRATIONS_STORAGE_KEY = 'recent_matched_plate_registrations';
 const INVALID_OCR_DEDUPLICATION_KEY = '__INVALID_OCR_RESULT__';
@@ -38,6 +40,10 @@ const ZOOM_LABELS = ['1x', '1.5x', '2x', '4x'];
 const getMatchedPlatesFile = () => new File(Paths.document, MATCHED_PLATES_FILE_NAME);
 
 type ScanMode = 'manual' | 'video';
+type ManualGpsCoordinate = {
+  latitude: number;
+  longitude: number;
+};
 type GpsStatus = 'checking' | 'active' | 'permission_denied' | 'services_disabled' | 'waiting' | 'unavailable';
 
 type StandardToastType = 'success' | 'warning' | 'error';
@@ -168,6 +174,8 @@ export default function HomeScreen() {
   const evidenceCaptureFrameRef = useRef<number | null>(null);
   const saveDetectionImageRef = useRef(false);
   const bypassRegistrationsRef = useRef(false);
+  const manualGpsEnabledRef = useRef(false);
+  const manualGpsCoordinatesRef = useRef<ManualGpsCoordinate | null>(null);
   const standardToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const customToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const zoomIndexRef = useRef(0);
@@ -381,6 +389,65 @@ customToastTimeoutRef.current = setTimeout(() => setCustomToast(null), duration)
     } catch (error) {
       console.error('Error loading bypass registrations setting:', error);
     }
+  };
+
+  const loadManualGpsSetting = async () => {
+    try {
+      const enabled = (await AsyncStorage.getItem(MANUAL_GPS_ENABLED_STORAGE_KEY)) === 'true';
+      const storedCoordinates = await AsyncStorage.getItem(
+        MANUAL_GPS_COORDINATES_STORAGE_KEY,
+      );
+
+      let coordinates: ManualGpsCoordinate | null = null;
+
+      if (storedCoordinates) {
+        const parts = storedCoordinates.split(',');
+
+        if (parts.length === 2) {
+          const latitude = Number(parts[0].trim());
+          const longitude = Number(parts[1].trim());
+
+          if (
+            Number.isFinite(latitude) &&
+            Number.isFinite(longitude) &&
+            latitude >= -90 &&
+            latitude <= 90 &&
+            longitude >= -180 &&
+            longitude <= 180
+          ) {
+            coordinates = { latitude, longitude };
+          }
+        }
+      }
+
+      manualGpsCoordinatesRef.current = coordinates;
+      manualGpsEnabledRef.current = enabled && coordinates !== null;
+    } catch (error) {
+      console.error('Error loading manual GPS setting:', error);
+      manualGpsEnabledRef.current = false;
+      manualGpsCoordinatesRef.current = null;
+    }
+  };
+
+  const getRegistrationLocation = async (): Promise<Location.LocationObject | null> => {
+    if (manualGpsEnabledRef.current && manualGpsCoordinatesRef.current) {
+      const { latitude, longitude } = manualGpsCoordinatesRef.current;
+
+      return {
+        coords: {
+          latitude,
+          longitude,
+          altitude: null,
+          accuracy: null,
+          altitudeAccuracy: null,
+          heading: null,
+          speed: null,
+        },
+        timestamp: Date.now(),
+      } as Location.LocationObject;
+    }
+
+    return getFreshLocationForRegistration();
   };
 
   const scheduleDetectionEvidence = async (
@@ -625,7 +692,7 @@ return;
       if (Platform.OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setTimeout(() => setFrameColor('blue'), 500);
 
-const location = await getFreshLocationForRegistration();
+const location = await getRegistrationLocation();
 
       if (location && !bypassRegistrationsRef.current) {
         await saveMatchedPlateWithLocation(detectedPlate, location);
@@ -808,6 +875,7 @@ void loadNotificationSettings();
 void loadOperationalSettings();
 void loadSaveDetectionImageSetting();
 void loadBypassRegistrationsSetting();
+void loadManualGpsSetting();
       void loadRecentDetections();
 void loadImportedPlates();
       void loadScannedPlates();

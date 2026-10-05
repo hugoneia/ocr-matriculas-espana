@@ -124,7 +124,7 @@ function parseCsvLine(line: string, rowIndex: number): CsvRecord | null {
 
 const EARTH_RADIUS_METERS = 6371000;
 const NEARBY_RADIUS_METERS = 5;
-const MARKER_CLOSE_ZOOM_LATITUDE_DELTA = 0.004;
+const MARKER_CLOSE_ZOOM_LATITUDE_DELTA = 0.0015;
 const EDITING_MAX_LATITUDE_DELTA = 0.001;
 const EDITING_MAX_LONGITUDE_DELTA = 0.001;
 

@@ -15,6 +15,8 @@ const NOTIFICATION_RULES_STORAGE_KEY = 'notification_rules';
 const GLOBAL_NOTIFICATIONS_KEY = 'global_notifications_active';
 const SAVE_DETECTION_IMAGE_STORAGE_KEY = 'save_detection_image';
 const BYPASS_REGISTRATIONS_STORAGE_KEY = 'bypass_registrations';
+const MANUAL_GPS_ENABLED_STORAGE_KEY = 'manual_gps_enabled';
+const MANUAL_GPS_COORDINATES_STORAGE_KEY = 'manual_gps_coordinates';
 const SPECIAL_ALERT_PLACEHOLDER = '¡Matrícula especial detectada!';
 const ALERTS_EXPORT_FILE_NAME = 'alertas_personalizadas.json';
 const SPANISH_PLATE_REGEX = /^\d{4}[BCDFGHJKLMNPRSTVWXYZ]{3}$/;
@@ -48,6 +50,8 @@ export default function AjustesScreen() {
   const [globalNotificationsActive, setGlobalNotificationsActive] = useState(true);
   const [saveDetectionImageEnabled, setSaveDetectionImageEnabled] = useState(false);
   const [bypassRegistrationsEnabled, setBypassRegistrationsEnabled] = useState(false);
+  const [manualGpsEnabled, setManualGpsEnabled] = useState(false);
+  const [manualGpsCoordinates, setManualGpsCoordinates] = useState('');
   const [timeInputs, setTimeInputs] = useState<TimeInputs>(toTimeInputs(DEFAULT_SCANNER_SETTINGS));
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [editingPlate, setEditingPlate] = useState('');
@@ -61,6 +65,7 @@ export default function AjustesScreen() {
       void loadTimeSettings();
       void loadSaveDetectionImageSetting();
       void loadBypassRegistrationsSetting();
+      void loadManualGpsSetting();
     }, []),
   );
 
@@ -92,6 +97,135 @@ export default function AjustesScreen() {
       setBypassRegistrationsEnabled(stored === 'true');
     } catch (error) {
       console.error('Error loading bypass registrations setting:', error);
+    }
+  };
+
+  const loadManualGpsSetting = async () => {
+    try {
+      const enabled = (await AsyncStorage.getItem(MANUAL_GPS_ENABLED_STORAGE_KEY)) === 'true';
+      const storedCoordinates = await AsyncStorage.getItem(
+        MANUAL_GPS_COORDINATES_STORAGE_KEY,
+      );
+
+      setManualGpsEnabled(enabled);
+      setManualGpsCoordinates(storedCoordinates ?? '');
+    } catch (error) {
+      console.error('Error loading manual GPS setting:', error);
+    }
+  };
+
+  const normalizeCoordinates = (input: string): string => {
+    // Normalizar comas decimales españolas a puntos.
+    // Mantiene la coma que separa latitud y longitud.
+    return input.replace(/(\d),(\d)/g, '$1.$2');
+  };
+
+  const parseCoordinates = (
+    input: string,
+  ): { lat: number; lng: number } | null => {
+    try {
+      const normalized = normalizeCoordinates(input);
+      const cleaned = normalized.trim();
+      const parts = cleaned.split(',');
+
+      if (parts.length !== 2) {
+        return null;
+      }
+
+      const lat = parseFloat(parts[0].trim());
+      const lng = parseFloat(parts[1].trim());
+
+      if (isNaN(lat) || isNaN(lng)) {
+        return null;
+      }
+
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        return null;
+      }
+
+      return { lat, lng };
+    } catch {
+      return null;
+    }
+  };
+
+  const saveManualGpsCoordinates = async (
+    value: string,
+    showError: boolean,
+  ): Promise<{ lat: number; lng: number } | null> => {
+    const parsed = parseCoordinates(value);
+
+    if (!parsed) {
+      if (showError) {
+        if (!value.trim()) {
+          Alert.alert('Error', 'Debe completarse el campo');
+        } else {
+          Alert.alert(
+            'Error',
+            'Formato inválido. Usa: lat,lng\nEjemplo: 40.340719,-3.666870\n\nTambién se admiten coordenadas con coma decimal, por ejemplo:\n40,340719, -3,666870\n\nRangos válidos:\nLatitud: -90 a 90\nLongitud: -180 a 180',
+          );
+        }
+      }
+
+      return null;
+    }
+
+    const normalizedValue = `${parsed.lat},${parsed.lng}`;
+
+    await AsyncStorage.setItem(
+      MANUAL_GPS_COORDINATES_STORAGE_KEY,
+      normalizedValue,
+    );
+
+    setManualGpsCoordinates(normalizedValue);
+
+    return parsed;
+  };
+
+  const handleToggleManualGps = async (value: boolean) => {
+    if (!value) {
+      try {
+        await AsyncStorage.setItem(MANUAL_GPS_ENABLED_STORAGE_KEY, 'false');
+        setManualGpsEnabled(false);
+      } catch (error) {
+        console.error('Error disabling manual GPS:', error);
+        Alert.alert('Error', 'No se pudo guardar el ajuste.');
+      }
+
+      return;
+    }
+
+    try {
+      const parsed = await saveManualGpsCoordinates(manualGpsCoordinates, true);
+
+      if (!parsed) {
+        setManualGpsEnabled(false);
+        return;
+      }
+
+      await AsyncStorage.setItem(MANUAL_GPS_ENABLED_STORAGE_KEY, 'true');
+      setManualGpsEnabled(true);
+    } catch (error) {
+      console.error('Error enabling manual GPS:', error);
+      setManualGpsEnabled(false);
+      Alert.alert('Error', 'No se pudo guardar el ajuste.');
+    }
+  };
+
+  const handleManualGpsCoordinatesChange = (value: string) => {
+    setManualGpsCoordinates(value);
+  };
+
+  const handleManualGpsCoordinatesBlur = async () => {
+    if (!manualGpsCoordinates.trim()) {
+      return;
+    }
+
+    try {
+      await saveManualGpsCoordinates(manualGpsCoordinates, true);
+    } catch (error) {
+      console.error('Error saving manual GPS coordinates:', error);
+      Alert.alert('Error', 'No se pudieron guardar las coordenadas.');
     }
   };
 
@@ -430,6 +564,35 @@ export default function AjustesScreen() {
               onValueChange={(value) => void handleToggleBypassRegistrations(value)}
             />
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.titleRow}>
+            <MaterialIcons name="gps-off" size={22} color="#007AFF" />
+            <Text style={styles.sectionTitle}>Ubicación manual</Text>
+          </View>
+
+          <View style={styles.globalToggleRow}>
+            <Text style={styles.globalToggleLabel}>Modo GPS offline</Text>
+            <Switch
+              value={manualGpsEnabled}
+              onValueChange={(value) => void handleToggleManualGps(value)}
+            />
+          </View>
+
+          <Text style={styles.inputLabel}>Introduce coordenadas GPS</Text>
+
+          <TextInput
+            style={styles.textInput}
+            value={manualGpsCoordinates}
+            onChangeText={handleManualGpsCoordinatesChange}
+            onBlur={() => void handleManualGpsCoordinatesBlur()}
+            placeholder="Ej: 40,4010148, -3,5518311"
+            placeholderTextColor="#8E8E93"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="default"
+          />
         </View>
 
         <View style={styles.section}>
