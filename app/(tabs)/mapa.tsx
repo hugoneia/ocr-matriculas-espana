@@ -5,6 +5,7 @@ import MapView, {
   type Region,
 } from "react-native-maps";
 import * as FileSystem from "expo-file-system/legacy";
+import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
@@ -182,6 +183,7 @@ export default function MapaScreen() {
   const [newRecordKeys, setNewRecordKeys] = useState<Set<string>>(new Set());
   const [mapType, setMapType] = useState<"standard" | "satellite">("standard");
   const mapTypeBeforeEditingRef = useRef<"standard" | "satellite">("standard");
+  const hasCenteredOnEntryRef = useRef(false);
 
   const loadRecords = useCallback(async () => {
     try {
@@ -261,6 +263,7 @@ export default function MapaScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      hasCenteredOnEntryRef.current = false;
       void loadRecords();
     }, [loadRecords]),
   );
@@ -299,38 +302,99 @@ export default function MapaScreen() {
       .sort();
   }, [records, searchQuery]);
 
+  const fallbackInitialCoordinate = useMemo<Coordinate | null>(() => {
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+      const coordinate = records[index].coordinate;
+
+      if (
+        Number.isFinite(coordinate.latitude) &&
+        Number.isFinite(coordinate.longitude)
+      ) {
+        return coordinate;
+      }
+    }
+
+    return null;
+  }, [records]);
+
   const initialRegion = useMemo<Region | null>(() => {
-    if (groups.length === 0) {
+    const coordinate = fallbackInitialCoordinate ?? groups[0]?.coordinate;
+
+    if (!coordinate) {
       return null;
     }
 
-    const first = groups[0].coordinate;
-
     return {
-      latitude: first.latitude,
-      longitude: first.longitude,
+      latitude: coordinate.latitude,
+      longitude: coordinate.longitude,
       latitudeDelta: 0.08,
       longitudeDelta: 0.08,
     };
-  }, [groups]);
+  }, [fallbackInitialCoordinate, groups]);
 
-  const handleMapLoaded = () => {
-    if (!mapRef.current || groups.length === 0) {
+  const handleMapLoaded = async () => {
+    if (!mapRef.current || hasCenteredOnEntryRef.current) {
       return;
     }
 
-    mapRef.current.fitToCoordinates(
-      groups.map((group) => group.coordinate),
-      {
-        edgePadding: {
-          top: 100,
-          right: 50,
-          bottom: 150,
-          left: 50,
-        },
-        animated: false,
+    hasCenteredOnEntryRef.current = true;
+
+    try {
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+
+      if (servicesEnabled) {
+        const permission = await Location.getForegroundPermissionsAsync();
+
+        if (permission.status === "granted") {
+          const currentLocation = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+
+          mapRef.current.animateToRegion(
+            {
+              latitude: currentLocation.coords.latitude,
+              longitude: currentLocation.coords.longitude,
+              latitudeDelta: 0.02,
+              longitudeDelta: 0.02,
+            },
+            500,
+          );
+
+          return;
+        }
       }
-    );
+    } catch {
+      // Si no se puede obtener la ubicación, usamos el respaldo.
+    }
+
+    if (fallbackInitialCoordinate) {
+      mapRef.current.animateToRegion(
+        {
+          latitude: fallbackInitialCoordinate.latitude,
+          longitude: fallbackInitialCoordinate.longitude,
+          latitudeDelta: 0.02,
+          longitudeDelta: 0.02,
+        },
+        500,
+      );
+
+      return;
+    }
+
+    if (groups.length > 0) {
+      mapRef.current.fitToCoordinates(
+        groups.map((group) => group.coordinate),
+        {
+          edgePadding: {
+            top: 100,
+            right: 50,
+            bottom: 150,
+            left: 50,
+          },
+          animated: false,
+        },
+      );
+    }
   };
 
   const handleSelectPlate = (plate: string | null) => {

@@ -81,8 +81,10 @@ interface DetectionEvidence {
   photoHeight: number;
   standardMessage: string;
   customMessage: string | null;
+  plate: string;
   date: string;
   time: string;
+  fileName: string;
   coordinates: string | null;
 }
 
@@ -456,6 +458,7 @@ customToastTimeoutRef.current = setTimeout(() => setCustomToast(null), duration)
     photoHeight: number,
     standardMessage: string,
     customMessage: string | null,
+    plate: string,
     location: Location.LocationObject | null,
   ) => {
     if (!saveDetectionImageRef.current || Platform.OS === 'web') return;
@@ -479,6 +482,16 @@ customToastTimeoutRef.current = setTimeout(() => setCustomToast(null), duration)
         ? `${location.coords.latitude}, ${location.coords.longitude}`
         : null;
 
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+
+      const timestamp = `${year}${month}${day}${hours}${minutes}${seconds}`;
+      const fileName = `OCRMatriculas-${plate}-${timestamp}.jpg`;
+
       setEvidenceImageLoaded(false);
       setDetectionEvidence({
         photoUri,
@@ -486,8 +499,10 @@ customToastTimeoutRef.current = setTimeout(() => setCustomToast(null), duration)
         photoHeight,
         standardMessage,
         customMessage,
+        plate,
         date: now.toLocaleDateString('es-ES'),
         time: now.toLocaleTimeString('es-ES', { hour12: false }),
+        fileName,
         coordinates,
       });
     } catch (error) {
@@ -713,6 +728,7 @@ const location = await getRegistrationLocation();
         photo.height,
         standardMessage,
         customMessage,
+        detectedPlate,
         location,
       );
 } catch (error) {
@@ -741,11 +757,18 @@ console.error('Error during scan:', error);
 
           const capturedUri = await captureRef(evidenceViewRef.current, {
             format: 'jpg',
-            quality: 0.92,
+            quality: 0.50,
             result: 'tmpfile',
           });
 
-          await MediaLibrary.createAssetAsync(capturedUri);
+          if (!detectionEvidence.fileName) {
+            throw new Error('No se pudo determinar el nombre de la evidencia.');
+          }
+
+          const evidenceFile = new File(Paths.cache, detectionEvidence.fileName);
+          new File(capturedUri).copy(evidenceFile);
+
+          await MediaLibrary.createAssetAsync(evidenceFile.uri);
         } catch (error) {
           console.error('Error guardando evidencia de detección:', error);
         } finally {
