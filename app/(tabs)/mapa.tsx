@@ -841,7 +841,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 44,
     paddingHorizontal: 12,
-    color: "#111",
+    color: "#007AFF",
     fontSize: 16,
   },
   clearButton: {

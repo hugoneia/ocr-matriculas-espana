@@ -1,9 +1,10 @@
-import React, { useCallback, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useRef, useState } from 'react';
+import { Alert, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
+import * as Location from 'expo-location';
 import { File, Paths } from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
@@ -52,6 +53,8 @@ export default function AjustesScreen() {
   const [bypassRegistrationsEnabled, setBypassRegistrationsEnabled] = useState(false);
   const [manualGpsEnabled, setManualGpsEnabled] = useState(false);
   const [manualGpsCoordinates, setManualGpsCoordinates] = useState('');
+  const settingsScrollViewRef = useRef<ScrollView | null>(null);
+  const manualGpsSectionYRef = useRef(0);
   const [timeInputs, setTimeInputs] = useState<TimeInputs>(toTimeInputs(DEFAULT_SCANNER_SETTINGS));
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [editingPlate, setEditingPlate] = useState('');
@@ -227,6 +230,98 @@ export default function AjustesScreen() {
       console.error('Error saving manual GPS coordinates:', error);
       Alert.alert('Error', 'No se pudieron guardar las coordenadas.');
     }
+  };
+
+  const openManualGpsMap = async () => {
+    try {
+      let coordinates: { latitude: number; longitude: number } | null = null;
+
+      // 1. Si el GPS está disponible y tiene permiso, intentar obtener
+      //    primero una posición actual.
+      const permission = await Location.getForegroundPermissionsAsync();
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+
+      if (permission.status === 'granted' && servicesEnabled) {
+        try {
+          const currentLocation = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.High,
+          });
+
+          if (
+            Number.isFinite(currentLocation.coords.latitude) &&
+            Number.isFinite(currentLocation.coords.longitude)
+          ) {
+            coordinates = {
+              latitude: currentLocation.coords.latitude,
+              longitude: currentLocation.coords.longitude,
+            };
+          }
+        } catch (error) {
+          console.warn('No se pudo obtener la ubicación GPS actual:', error);
+        }
+      }
+
+      // 2. Si no se pudo obtener una posición actual, usar las coordenadas
+      //    introducidas en el campo.
+      if (!coordinates) {
+        const parsed = parseCoordinates(manualGpsCoordinates);
+
+        if (parsed) {
+          coordinates = {
+            latitude: parsed.lat,
+            longitude: parsed.lng,
+          };
+        }
+      }
+
+      // 3. Si tampoco hay coordenadas en el campo, usar la última conocida
+      //    disponible en el dispositivo.
+      if (!coordinates) {
+        try {
+          const lastKnown = await Location.getLastKnownPositionAsync({
+            requiredAccuracy: 1000,
+          });
+
+          if (
+            lastKnown &&
+            Number.isFinite(lastKnown.coords.latitude) &&
+            Number.isFinite(lastKnown.coords.longitude)
+          ) {
+            coordinates = {
+              latitude: lastKnown.coords.latitude,
+              longitude: lastKnown.coords.longitude,
+            };
+          }
+        } catch (error) {
+          console.warn('No se pudo obtener la última ubicación conocida:', error);
+        }
+      }
+
+      if (!coordinates) {
+        Alert.alert(
+          'Ubicación no disponible',
+          'No hay una ubicación GPS disponible ni coordenadas introducidas para abrir el mapa.',
+        );
+        return;
+      }
+
+      const query = `${coordinates.latitude},${coordinates.longitude}`;
+      const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+
+      await Linking.openURL(url);
+    } catch (error) {
+      console.error('Error abriendo Google Maps:', error);
+      Alert.alert('Error', 'No se pudo abrir Google Maps.');
+    }
+  };
+
+  const handleManualGpsCoordinatesFocus = () => {
+    setTimeout(() => {
+      settingsScrollViewRef.current?.scrollTo({
+        y: Math.max(0, manualGpsSectionYRef.current),
+        animated: true,
+      });
+    }, 100);
   };
 
   const handleToggleBypassRegistrations = async (value: boolean) => {
@@ -507,7 +602,16 @@ export default function AjustesScreen() {
 
   return (
     <ScreenContainer className="flex-1 p-4">
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <ScrollView
+          ref={settingsScrollViewRef}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="none"
+        >
         <View style={styles.section}>
           <View style={styles.titleRow}>
             <MaterialIcons name="timer" size={22} color="#007AFF" />
@@ -566,7 +670,12 @@ export default function AjustesScreen() {
           </View>
         </View>
 
-        <View style={styles.section}>
+        <View
+          style={styles.section}
+          onLayout={(event) => {
+            manualGpsSectionYRef.current = event.nativeEvent.layout.y;
+          }}
+        >
           <View style={styles.titleRow}>
             <MaterialIcons name="gps-off" size={22} color="#007AFF" />
             <Text style={styles.sectionTitle}>Ubicación manual</Text>
@@ -582,17 +691,30 @@ export default function AjustesScreen() {
 
           <Text style={styles.inputLabel}>Introduce coordenadas GPS</Text>
 
-          <TextInput
-            style={styles.textInput}
-            value={manualGpsCoordinates}
-            onChangeText={handleManualGpsCoordinatesChange}
-            onBlur={() => void handleManualGpsCoordinatesBlur()}
-            placeholder="Ej: 40,4010148, -3,5518311"
-            placeholderTextColor="#8E8E93"
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="default"
-          />
+          <View style={styles.coordinatesInputRow}>
+            <TextInput
+              style={[styles.textInput, styles.coordinatesTextInput]}
+              value={manualGpsCoordinates}
+              onChangeText={handleManualGpsCoordinatesChange}
+              onBlur={() => void handleManualGpsCoordinatesBlur()}
+              onFocus={handleManualGpsCoordinatesFocus}
+              selectTextOnFocus
+              placeholder="Ej: 40,4010148, -3,5518311"
+              placeholderTextColor="#8E8E93"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="default"
+            />
+
+            <TouchableOpacity
+              style={styles.mapButton}
+              onPress={() => void openManualGpsMap()}
+              accessibilityRole="button"
+              accessibilityLabel="Abrir Google Maps"
+            >
+              <MaterialIcons name="map" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.section}>
@@ -651,7 +773,8 @@ export default function AjustesScreen() {
             </View>
           ) : <Text style={styles.emptyText}>No hay reglas de notificación configuradas.</Text>}
         </View>
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       <Modal visible={showNotificationModal} animationType="slide" transparent onRequestClose={() => setShowNotificationModal(false)}>
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={24}>
@@ -787,7 +910,7 @@ const styles = StyleSheet.create({
   helpText: { color: '#687076', fontSize: 13, lineHeight: 18, marginBottom: 12 },
   timeField: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingVertical: 8, borderBottomColor: '#E5E7EB', borderBottomWidth: 1 },
   timeLabel: { flex: 1, fontSize: 14, color: '#11181C', fontWeight: '600' },
-  timeInput: { width: 74, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingVertical: 7, paddingHorizontal: 9, backgroundColor: '#F9FAFB', textAlign: 'center', fontSize: 15 },
+  timeInput: { width: 74, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingVertical: 7, paddingHorizontal: 9, backgroundColor: '#F9FAFB', textAlign: 'center', fontSize: 15, color: '#007AFF' },
   globalToggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, backgroundColor: '#F5F5F5', padding: 12, borderRadius: 8 },
   globalToggleLabel: { fontSize: 15, fontWeight: '600', color: '#11181C', flex: 1, paddingRight: 12 },
   button: { backgroundColor: '#007AFF', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, alignItems: 'center', marginTop: 12 },
@@ -809,7 +932,10 @@ const styles = StyleSheet.create({
   modalContent: { backgroundColor: 'white', borderRadius: 12, padding: 20, width: '100%', maxWidth: 400, alignSelf: 'center' },
   modalTitleText: { fontSize: 18, fontWeight: 'bold', marginBottom: 16, textAlign: 'center', color: '#11181C' },
   inputLabel: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 6 },
-  textInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, padding: 10, fontSize: 15, marginBottom: 16, backgroundColor: '#F9FAFB' },
+  textInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, padding: 10, fontSize: 15, marginBottom: 16, backgroundColor: '#F9FAFB', color: '#007AFF' },
+  coordinatesInputRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  coordinatesTextInput: { flex: 1 },
+  mapButton: { width: 48, height: 48, borderRadius: 8, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center' },
   textInputValid: { borderColor: '#34C759' },
   textInputInvalid: { borderColor: '#FF3B30' },
   textInputExisting: { borderColor: '#FF9500' },
