@@ -67,6 +67,7 @@ interface ScannedPlateItem {
 interface StoredDetection {
   plate: string;
   timestamp?: number;
+  manual?: boolean;
 }
 
 interface NotificationRule {
@@ -129,7 +130,14 @@ function parseStoredDetections(rawValue: string | null): StoredDetection[] {
     return parsed.reduce<StoredDetection[]>((entries, entry) => {
       const plate = typeof entry === 'string' ? entry : entry?.plate;
       const timestamp = typeof entry === 'object' && typeof entry?.timestamp === 'number' ? entry.timestamp : undefined;
-      if (typeof plate === 'string' && plate.trim()) entries.push({ plate: plate.trim().toUpperCase(), timestamp });
+      const manual = typeof entry === 'object' && entry?.manual === true;
+      if (typeof plate === 'string' && plate.trim()) {
+        entries.push({
+          plate: plate.trim().toUpperCase(),
+          timestamp,
+          ...(manual ? { manual: true } : {}),
+        });
+      }
       return entries;
     }, []);
   } catch (error) {

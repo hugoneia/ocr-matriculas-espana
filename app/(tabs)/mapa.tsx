@@ -1,7 +1,7 @@
 import MapView, {
   Marker,
   PROVIDER_GOOGLE,
-  type MapMarkerDragEvent,
+  type MarkerDragStartEndEvent,
   type Region,
 } from "react-native-maps";
 import * as FileSystem from "expo-file-system/legacy";
@@ -516,7 +516,7 @@ export default function MapaScreen() {
     });
   };
 
-  const handleDragEnd = (event: MapMarkerDragEvent) => {
+  const handleDragEnd = (event: MarkerDragStartEndEvent) => {
     const coordinate = event.nativeEvent.coordinate;
 
     setEditingCoordinate({

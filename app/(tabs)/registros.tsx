@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Linking, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -13,6 +13,7 @@ import { ScreenContainer } from '@/components/screen-container';
 const IMPORTED_PLATES_STORAGE_KEY = 'imported_plates';
 const ALL_DETECTIONS_STORAGE_KEY = 'all_scanned_plate_detections';
 const MAP_NEW_RECORD_KEYS_STORAGE_KEY = 'map_new_record_keys';
+const MANUAL_RECORD_KEYS_STORAGE_KEY = 'manual_detection_record_keys';
 const PLATES_FILE_NAME = 'matriculas_detectadas.csv';
 
 const getPlatesFile = () => new File(Paths.document, PLATES_FILE_NAME);
@@ -28,11 +29,17 @@ interface ScannedPlate {
   time: string;
   latitude: string;
   longitude: string;
+  manual?: boolean;
+}
+
+function getManualRecordKey(record: Pick<ScannedPlate, 'plate' | 'date' | 'time'>): string {
+  return [record.plate.trim().toUpperCase(), record.date.trim(), record.time.trim()].join('|');
 }
 
 interface StoredDetection {
   plate: string;
   timestamp?: number;
+  manual?: boolean;
 }
 
 function parseStoredDetections(rawValue: string | null): StoredDetection[] {
@@ -48,11 +55,13 @@ function parseStoredDetections(rawValue: string | null): StoredDetection[] {
         typeof entry === 'object' && typeof entry?.timestamp === 'number'
           ? entry.timestamp
           : undefined;
+      const manual = typeof entry === 'object' && entry?.manual === true;
 
       if (typeof plate === 'string' && plate.trim()) {
         entries.push({
           plate: plate.trim().toUpperCase(),
           timestamp,
+          ...(manual ? { manual: true } : {}),
         });
       }
 
@@ -137,6 +146,11 @@ export default function RegistrosScreen() {
   const [importedPlates, setImportedPlates] = useState<Record<string, ImportedPlateData>>({});
   const [scannedPlates, setScannedPlates] = useState<ScannedPlate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [showManualEntryModal, setShowManualEntryModal] = useState(false);
+  const [manualPlate, setManualPlate] = useState('');
+  const [manualCoordinates, setManualCoordinates] = useState('');
+  const [manualDate, setManualDate] = useState('');
+  const [manualTime, setManualTime] = useState('');
 
   useFocusEffect(
     useCallback(() => {
@@ -158,6 +172,20 @@ export default function RegistrosScreen() {
       }
 
       const importedStore = normalizeImportedPlates(await AsyncStorage.getItem(IMPORTED_PLATES_STORAGE_KEY));
+      let manualRecordKeys: string[] = [];
+
+      try {
+        const rawManualKeys = await AsyncStorage.getItem(MANUAL_RECORD_KEYS_STORAGE_KEY);
+        const parsedManualKeys = rawManualKeys ? JSON.parse(rawManualKeys) : [];
+        if (Array.isArray(parsedManualKeys)) {
+          manualRecordKeys = parsedManualKeys.filter(
+            (key): key is string => typeof key === 'string',
+          );
+        }
+      } catch (error) {
+        console.warn('No se pudieron leer las marcas de registros manuales:', error);
+      }
+
       const platesData = (await platesFile.text())
         .split('\n')
         .filter(Boolean)
@@ -173,16 +201,208 @@ export default function RegistrosScreen() {
           const longitude = rawLongitude.trim();
 
           return plate && latitude && longitude
-            ? { plate, date: rawDate.trim(), time: rawTime.trim(), latitude, longitude }
+            ? {
+                plate,
+                date: rawDate.trim(),
+                time: rawTime.trim(),
+                latitude,
+                longitude,
+              }
             : null;
         })
         .filter((item): item is ScannedPlate => item !== null)
-        .filter((item) => item.plate in importedStore)
+        .map((item) => ({
+          ...item,
+          manual: manualRecordKeys.includes(getManualRecordKey(item)),
+        }))
+        .filter((item) => item.manual || item.plate in importedStore)
         .reverse();
 
       setScannedPlates(platesData);
     } catch (error) {
       console.error('Error loading scanned plates:', error);
+    }
+  };
+
+  const openManualEntry = () => {
+    const now = new Date();
+    setManualPlate('');
+    setManualCoordinates('');
+    setManualDate(now.toLocaleDateString('es-ES'));
+    setManualTime(
+      now.toLocaleTimeString('es-ES', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }),
+    );
+    setShowManualEntryModal(true);
+  };
+
+  const handleSaveManualEntry = async () => {
+    const plate = manualPlate.trim().toUpperCase();
+    const date = manualDate.trim();
+    const time = manualTime.trim();
+
+    if (!/^\d{4}[BCDFGHJKLMNPRSTVWXYZ]{3}$/.test(plate)) {
+      Alert.alert(
+        'Matrícula no válida',
+        'Introduce una matrícula española válida con 4 números y 3 letras.',
+      );
+      return;
+    }
+
+    // Se aplica la misma normalización de comas decimales que en Ajustes.
+    const normalizedCoordinates = manualCoordinates.replace(/(\d),(\d)/g, '$1.$2').trim();
+    const coordinateParts = normalizedCoordinates.split(',');
+
+    if (coordinateParts.length !== 2 ||
+        !coordinateParts[0].trim() ||
+        !coordinateParts[1].trim() ||
+        !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(coordinateParts[0].trim()) ||
+        !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(coordinateParts[1].trim())) {
+      Alert.alert(
+        'Coordenadas no válidas',
+        'Introduce latitud y longitud separadas por una coma. También se admiten comas decimales españolas.',
+      );
+      return;
+    }
+
+    const latitudeNumber = Number(coordinateParts[0].trim());
+    const longitudeNumber = Number(coordinateParts[1].trim());
+
+    if (!Number.isFinite(latitudeNumber) ||
+        !Number.isFinite(longitudeNumber) ||
+        latitudeNumber < -90 || latitudeNumber > 90 ||
+        longitudeNumber < -180 || longitudeNumber > 180) {
+      Alert.alert(
+        'Coordenadas no válidas',
+        'La latitud debe estar entre -90 y 90 y la longitud entre -180 y 180.',
+      );
+      return;
+    }
+
+    if (!/^\d{1,2}:\d{2}(?::\d{2})?$/.test(time) ||
+        parseSpanishDateTimeToTimestamp(date, time) === null) {
+      Alert.alert(
+        'Fecha u hora no válidas',
+        'Usa la fecha DD/MM/AAAA y la hora HH:mm o HH:mm:ss. Comprueba que existan realmente.',
+      );
+      return;
+    }
+
+    const recordKey = getManualRecordKey({ plate, date, time });
+    const canonicalCoordinates = `${latitudeNumber},${longitudeNumber}`;
+    const platesFile = getPlatesFile();
+
+    try {
+      let currentContent = '';
+
+      if ((await platesFile.info()).exists) {
+        currentContent = (await platesFile.text())
+          .replace(/^\uFEFF/, '')
+          .replace(/\r\n/g, '\n');
+      }
+
+      if (!currentContent.trim()) {
+        currentContent = 'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD,LUGAR\n';
+      }
+
+      const existingLines = currentContent
+        .split('\n')
+        .filter((line) => line.trim() !== '');
+
+      const existingRows = existingLines.slice(1);
+      const duplicate = existingRows.some((line) => {
+        const match = line.match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"(?:,([^,]*))?$/);
+        return Boolean(
+          match &&
+          match[1].trim().toUpperCase() === plate &&
+          match[2].trim() === date &&
+          match[3].trim() === time
+        );
+      });
+
+      if (duplicate) {
+        Alert.alert(
+          'Registro duplicado',
+          'Ya existe un registro con esa matrícula, fecha y hora.',
+        );
+        return;
+      }
+
+      // Registrar la marca antes de escribir el CSV. Si falla el CSV,
+      // la marca huérfana no mostrará ninguna fila.
+      let manualKeys: string[] = [];
+      try {
+        const rawKeys = await AsyncStorage.getItem(MANUAL_RECORD_KEYS_STORAGE_KEY);
+        const parsedKeys = rawKeys ? JSON.parse(rawKeys) : [];
+        if (Array.isArray(parsedKeys)) {
+          manualKeys = parsedKeys.filter(
+            (key): key is string => typeof key === 'string',
+          );
+        }
+      } catch {
+        manualKeys = [];
+      }
+
+      await AsyncStorage.setItem(
+        MANUAL_RECORD_KEYS_STORAGE_KEY,
+        JSON.stringify(Array.from(new Set([...manualKeys, recordKey]))),
+      );
+
+      const header = existingLines[0] || 'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD,LUGAR';
+      const newRow = `${plate},${date},${time},"${canonicalCoordinates}",OK`;
+      await platesFile.write(`${[header, ...existingRows, newRow].join('\n')}\n`);
+
+      // Marcar el registro como nuevo para el mapa.
+      try {
+        const rawMapKeys = await AsyncStorage.getItem(MAP_NEW_RECORD_KEYS_STORAGE_KEY);
+        const parsedMapKeys = rawMapKeys ? JSON.parse(rawMapKeys) : [];
+        const mapKeys = Array.isArray(parsedMapKeys)
+          ? parsedMapKeys.filter((key): key is string => typeof key === 'string')
+          : [];
+        await AsyncStorage.setItem(
+          MAP_NEW_RECORD_KEYS_STORAGE_KEY,
+          JSON.stringify(Array.from(new Set([...mapKeys, recordKey]))),
+        );
+      } catch (error) {
+        console.warn('El registro se guardó, pero no se pudo marcar como nuevo en el mapa:', error);
+      }
+
+      // Mantener la lista interna de detecciones de la pestaña Cámara.
+      try {
+        const rawDetections = await AsyncStorage.getItem(ALL_DETECTIONS_STORAGE_KEY);
+        const detections = parseStoredDetections(rawDetections);
+        const timestamp = parseSpanishDateTimeToTimestamp(date, time);
+
+        detections.push({
+          plate,
+          ...(timestamp !== null ? { timestamp } : {}),
+          manual: true,
+        });
+
+        await AsyncStorage.setItem(
+          ALL_DETECTIONS_STORAGE_KEY,
+          JSON.stringify(detections),
+        );
+      } catch (error) {
+        console.warn('El registro se guardó en el historial, pero no en la lista interna:', error);
+      }
+
+      setShowManualEntryModal(false);
+      await loadScannedPlates();
+
+      Alert.alert(
+        'Registro guardado',
+        plate in importedPlates
+          ? 'La detección manual se ha añadido al historial.'
+          : 'La detección manual se ha añadido al historial. La matrícula no figura en el registro importado.',
+      );
+    } catch (error) {
+      console.error('Error al guardar el registro manual:', error);
+      Alert.alert('Error', 'No se pudo guardar el registro manual.');
     }
   };
 
@@ -472,7 +692,35 @@ export default function RegistrosScreen() {
         onPress: async () => {
           const platesFile = getPlatesFile();
           if ((await platesFile.info()).exists) await platesFile.delete();
+          // Retirar del mapa las marcas nuevas que pertenecen a registros manuales.
+          try {
+            const rawManualKeys = await AsyncStorage.getItem(MANUAL_RECORD_KEYS_STORAGE_KEY);
+            const parsedManualKeys = rawManualKeys ? JSON.parse(rawManualKeys) : [];
+            const manualKeys = Array.isArray(parsedManualKeys)
+              ? parsedManualKeys.filter((key): key is string => typeof key === 'string')
+              : [];
+
+            if (manualKeys.length > 0) {
+              const rawMapKeys = await AsyncStorage.getItem(MAP_NEW_RECORD_KEYS_STORAGE_KEY);
+              const parsedMapKeys = rawMapKeys ? JSON.parse(rawMapKeys) : [];
+
+              if (Array.isArray(parsedMapKeys)) {
+                const remainingMapKeys = parsedMapKeys.filter(
+                  (key): key is string =>
+                    typeof key === 'string' && !manualKeys.includes(key),
+                );
+                await AsyncStorage.setItem(
+                  MAP_NEW_RECORD_KEYS_STORAGE_KEY,
+                  JSON.stringify(remainingMapKeys),
+                );
+              }
+            }
+          } catch (error) {
+            console.warn('No se pudieron limpiar todas las marcas manuales del mapa:', error);
+          }
+
           await AsyncStorage.removeItem(ALL_DETECTIONS_STORAGE_KEY);
+          await AsyncStorage.removeItem(MANUAL_RECORD_KEYS_STORAGE_KEY);
           setScannedPlates([]);
           Alert.alert('Completado', 'Registros OCR eliminados.');
         },
@@ -558,49 +806,68 @@ export default function RegistrosScreen() {
                     item.time,
                   );
 
-                  let closestDifference = Number.POSITIVE_INFINITY;
+                  if (item.manual) {
+                    // Las entradas manuales se identifican por su marca
+                    // y por el timestamp exacto, nunca por aproximación.
+                    if (targetTimestamp !== null) {
+                      detectionIndex = detections.findIndex(
+                        (detection) =>
+                          detection.manual === true &&
+                          detection.plate === item.plate &&
+                          detection.timestamp === targetTimestamp,
+                      );
+                    }
+                  } else {
+                    // Una fila OCR nunca debe eliminar una entrada manual.
+                    let closestDifference = Number.POSITIVE_INFINITY;
 
-                  if (targetTimestamp !== null) {
-                    detections.forEach((detection, index) => {
-                      if (
-                        detection.plate !== item.plate ||
-                        typeof detection.timestamp !== 'number'
-                      ) {
-                        return;
-                      }
+                    if (targetTimestamp !== null) {
+                      detections.forEach((detection, index) => {
+                        if (
+                          detection.manual === true ||
+                          detection.plate !== item.plate ||
+                          typeof detection.timestamp !== 'number'
+                        ) {
+                          return;
+                        }
 
-                      const difference = Math.abs(
-                        detection.timestamp - targetTimestamp,
+                        const difference = Math.abs(
+                          detection.timestamp - targetTimestamp,
+                        );
+
+                        if (
+                          difference <= 5 * 60 * 1000 &&
+                          difference < closestDifference
+                        ) {
+                          closestDifference = difference;
+                          detectionIndex = index;
+                        }
+                      });
+                    }
+
+                    // Para datos antiguos sin timestamp solo permitimos asociar
+                    // automáticamente si existe exactamente una detección OCR
+                    // de esa matrícula y además es la única detección OCR disponible.
+                    if (detectionIndex === -1) {
+                      const samePlateIndexes = detections
+                        .map((detection, index) => ({ detection, index }))
+                        .filter(
+                          ({ detection }) =>
+                            detection.manual !== true &&
+                            detection.plate === item.plate,
+                        )
+                        .map(({ index }) => index);
+
+                      const indexesWithoutTimestamp = samePlateIndexes.filter(
+                        (index) => typeof detections[index]?.timestamp !== 'number',
                       );
 
                       if (
-                        difference <= 5 * 60 * 1000 &&
-                        difference < closestDifference
+                        indexesWithoutTimestamp.length === 1 &&
+                        samePlateIndexes.length === 1
                       ) {
-                        closestDifference = difference;
-                        detectionIndex = index;
+                        detectionIndex = indexesWithoutTimestamp[0];
                       }
-                    });
-                  }
-
-                  // Para datos antiguos sin timestamp solo permitimos asociar
-                  // automáticamente si existe exactamente una detección de
-                  // esa matrícula y además es la única disponible.
-                  if (detectionIndex === -1) {
-                    const samePlateIndexes = detections
-                      .map((detection, index) => ({ detection, index }))
-                      .filter(({ detection }) => detection.plate === item.plate)
-                      .map(({ index }) => index);
-
-                    const indexesWithoutTimestamp = samePlateIndexes.filter(
-                      (index) => typeof detections[index]?.timestamp !== 'number',
-                    );
-
-                    if (
-                      indexesWithoutTimestamp.length === 1 &&
-                      samePlateIndexes.length === 1
-                    ) {
-                      detectionIndex = indexesWithoutTimestamp[0];
                     }
                   }
 
@@ -648,6 +915,44 @@ export default function RegistrosScreen() {
                 }
               }
 
+
+              if (item.manual) {
+                const recordKey = getManualRecordKey(item);
+
+                try {
+                  const rawManualKeys = await AsyncStorage.getItem(MANUAL_RECORD_KEYS_STORAGE_KEY);
+                  const parsedManualKeys = rawManualKeys ? JSON.parse(rawManualKeys) : [];
+                  const manualKeys = Array.isArray(parsedManualKeys)
+                    ? parsedManualKeys.filter(
+                        (key): key is string =>
+                          typeof key === 'string' && key !== recordKey,
+                      )
+                    : [];
+                  await AsyncStorage.setItem(
+                    MANUAL_RECORD_KEYS_STORAGE_KEY,
+                    JSON.stringify(manualKeys),
+                  );
+                } catch (error) {
+                  console.warn('No se pudo limpiar la marca del registro manual:', error);
+                }
+
+                try {
+                  const rawMapKeys = await AsyncStorage.getItem(MAP_NEW_RECORD_KEYS_STORAGE_KEY);
+                  const parsedMapKeys = rawMapKeys ? JSON.parse(rawMapKeys) : [];
+                  const mapKeys = Array.isArray(parsedMapKeys)
+                    ? parsedMapKeys.filter(
+                        (key): key is string =>
+                          typeof key === 'string' && key !== recordKey,
+                      )
+                    : [];
+                  await AsyncStorage.setItem(
+                    MAP_NEW_RECORD_KEYS_STORAGE_KEY,
+                    JSON.stringify(mapKeys),
+                  );
+                } catch (error) {
+                  console.warn('No se pudo limpiar la marca del mapa:', error);
+                }
+              }
 
               // Recargar el historial desde el CSV.
               await loadScannedPlates();
@@ -728,7 +1033,17 @@ export default function RegistrosScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Historial</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, styles.sectionTitleInHeader]}>Historial</Text>
+            <TouchableOpacity
+              style={styles.buttonAddManual}
+              onPress={openManualEntry}
+              accessibilityRole="button"
+              accessibilityLabel="Añadir registro manual"
+            >
+              <MaterialIcons name="add" size={25} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
           <View style={styles.historyActions}>
             <TouchableOpacity style={styles.buttonExport} onPress={() => void handleExportRecords()}>
               <Text style={styles.buttonSmallText}>📤 Exportar</Text>
@@ -746,7 +1061,7 @@ export default function RegistrosScreen() {
               </TouchableOpacity>
             )}
           </View>
-          <Text style={styles.helpText}>Solo se muestran detecciones que existen en el CSV importado.</Text>
+          <Text style={styles.helpText}>Se muestran las detecciones de matrículas importadas y los registros manuales marcados con *.</Text>
           {scannedPlates.length > 0 ? (
             <FlatList
               data={scannedPlates}
@@ -756,7 +1071,7 @@ export default function RegistrosScreen() {
                 <View style={styles.plateItem}>
                   <View>
                     <TouchableOpacity onPress={() => void openPlateLocation(item)}>
-                      <Text style={styles.plateText}>{item.plate}</Text>
+                      <Text style={styles.plateText}>{item.manual ? '* ' : ''}{item.plate}</Text>
                     </TouchableOpacity>
                     <Text style={styles.plateSubText}>{item.date} {item.time}</Text>
                   </View>
@@ -774,6 +1089,107 @@ export default function RegistrosScreen() {
           ) : <Text style={styles.emptyText}>No hay coincidencias registradas aún.</Text>}
         </View>
       </ScrollView>
+
+      <Modal
+        visible={showManualEntryModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowManualEntryModal(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={24}
+        >
+          <ScrollView
+            contentContainerStyle={styles.modalScrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitleText}>Añadir registro manual</Text>
+
+              <Text style={styles.inputLabel}>Matrícula:</Text>
+              <TextInput
+                style={[
+                  styles.textInput,
+                  manualPlate.trim().length > 0 &&
+                  !/^\d{4}[BCDFGHJKLMNPRSTVWXYZ]{3}$/.test(manualPlate.trim().toUpperCase())
+                    ? styles.textInputInvalid
+                    : manualPlate.trim().length > 0
+                      ? styles.textInputValid
+                      : null,
+                ]}
+                value={manualPlate}
+                onChangeText={(value) => setManualPlate(value.toUpperCase())}
+                placeholder="Ej.: 1234 BCD"
+                autoCapitalize="characters"
+                autoCorrect={false}
+                maxLength={7}
+              />
+
+              {manualPlate.trim().length > 0 &&
+                !/^\d{4}[BCDFGHJKLMNPRSTVWXYZ]{3}$/.test(manualPlate.trim().toUpperCase()) && (
+                  <Text style={styles.validationErrorText}>
+                    Introduce 4 números y 3 letras válidas.
+                  </Text>
+                )}
+
+              {/^\d{4}[BCDFGHJKLMNPRSTVWXYZ]{3}$/.test(manualPlate.trim().toUpperCase()) &&
+                !(manualPlate.trim().toUpperCase() in importedPlates) && (
+                  <Text style={styles.validationWarningText}>
+                    Esta matrícula no figura en el registro importado. Puedes continuar y guardar la detección manual.
+                  </Text>
+                )}
+
+              <Text style={styles.inputLabel}>Coordenadas GPS (latitud,longitud):</Text>
+              <TextInput
+                style={styles.textInput}
+                value={manualCoordinates}
+                onChangeText={setManualCoordinates}
+                placeholder="40.340719,-3.666870"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <Text style={styles.modalHelpText}>
+                También se admiten comas decimales españolas.
+              </Text>
+
+              <Text style={styles.inputLabel}>Fecha (DD/MM/AAAA):</Text>
+              <TextInput
+                style={styles.textInput}
+                value={manualDate}
+                onChangeText={setManualDate}
+                placeholder="DD/MM/AAAA"
+                keyboardType="numbers-and-punctuation"
+              />
+
+              <Text style={styles.inputLabel}>Hora (HH:mm:ss):</Text>
+              <TextInput
+                style={styles.textInput}
+                value={manualTime}
+                onChangeText={setManualTime}
+                placeholder="HH:mm:ss"
+                keyboardType="numbers-and-punctuation"
+              />
+
+              <View style={styles.modalButtonsRow}>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalButtonCancel]}
+                  onPress={() => setShowManualEntryModal(false)}
+                >
+                  <Text style={styles.modalButtonText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalButtonSave]}
+                  onPress={() => void handleSaveManualEntry()}
+                >
+                  <Text style={styles.modalButtonText}>Guardar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
     </ScreenContainer>
   );
 }
@@ -783,6 +1199,7 @@ const styles = StyleSheet.create({
   section: { marginBottom: 24, backgroundColor: '#fff', padding: 16, borderRadius: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 },
   historyActions: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0, marginBottom: 8 },
+  buttonAddManual: { width: 42, height: 42, borderRadius: 8, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#11181C', marginBottom: 12 },
   sectionTitleInHeader: { flex: 1, flexShrink: 1, marginBottom: 0 },
   button: { backgroundColor: '#007AFF', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, alignItems: 'center', marginBottom: 12 },
@@ -798,4 +1215,20 @@ const styles = StyleSheet.create({
   plateText: { fontSize: 16, fontWeight: 'bold', color: '#FF3B30' },
   plateSubText: { fontSize: 12, color: '#687076', marginTop: 2 },
   emptyText: { fontSize: 14, color: '#687076', fontStyle: 'italic', textAlign: 'center', marginVertical: 8 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 20 },
+  modalScrollContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: 24 },
+  modalContent: { backgroundColor: 'white', borderRadius: 12, padding: 20, width: '100%', maxWidth: 400, alignSelf: 'center' },
+  modalTitleText: { fontSize: 18, fontWeight: 'bold', marginBottom: 16, textAlign: 'center', color: '#11181C' },
+  inputLabel: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 6 },
+  textInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, padding: 10, fontSize: 15, marginBottom: 16, backgroundColor: '#F9FAFB', color: '#007AFF' },
+  textInputValid: { borderColor: '#34C759' },
+  textInputInvalid: { borderColor: '#FF3B30' },
+  validationErrorText: { color: '#FF3B30', fontSize: 13, marginTop: -10, marginBottom: 12 },
+  validationWarningText: { color: '#FF9500', fontSize: 13, fontWeight: '600', marginTop: -8, marginBottom: 12 },
+  modalHelpText: { color: '#687076', fontSize: 12, marginTop: -10, marginBottom: 12 },
+  modalButtonsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
+  modalButton: { flex: 1, paddingVertical: 12, borderRadius: 8, alignItems: 'center', marginHorizontal: 6 },
+  modalButtonCancel: { backgroundColor: '#687076' },
+  modalButtonSave: { backgroundColor: '#007AFF' },
+  modalButtonText: { color: 'white', fontSize: 16, fontWeight: '600' },
 });
