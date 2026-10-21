@@ -1035,14 +1035,6 @@ export default function RegistrosScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, styles.sectionTitleInHeader]}>Historial</Text>
-            <TouchableOpacity
-              style={styles.buttonAddManual}
-              onPress={openManualEntry}
-              accessibilityRole="button"
-              accessibilityLabel="Añadir registro manual"
-            >
-              <MaterialIcons name="add" size={25} color="#FFFFFF" />
-            </TouchableOpacity>
           </View>
           <View style={styles.historyActions}>
             <TouchableOpacity style={styles.buttonExport} onPress={() => void handleExportRecords()}>
@@ -1060,6 +1052,14 @@ export default function RegistrosScreen() {
                 <Text style={styles.buttonSmallText}>Eliminar</Text>
               </TouchableOpacity>
             )}
+            <TouchableOpacity
+              style={styles.buttonAddManual}
+              onPress={openManualEntry}
+              accessibilityRole="button"
+              accessibilityLabel="Añadir registro manual"
+            >
+              <MaterialIcons name="add" size={25} color="#FFFFFF" />
+            </TouchableOpacity>
           </View>
           <Text style={styles.helpText}>Se muestran las detecciones de matrículas importadas y los registros manuales marcados con *.</Text>
           {scannedPlates.length > 0 ? (
@@ -1198,16 +1198,16 @@ const styles = StyleSheet.create({
   content: { paddingBottom: 40 },
   section: { marginBottom: 24, backgroundColor: '#fff', padding: 16, borderRadius: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 },
-  historyActions: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0, marginBottom: 8 },
-  buttonAddManual: { width: 42, height: 42, borderRadius: 8, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  historyActions: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  buttonAddManual: { width: 42, height: 42, borderRadius: 8, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center' },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#11181C', marginBottom: 12 },
   sectionTitleInHeader: { flex: 1, flexShrink: 1, marginBottom: 0 },
   button: { backgroundColor: '#007AFF', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, alignItems: 'center', marginBottom: 12 },
   buttonDanger: { backgroundColor: '#FF3B30' },
   buttonText: { color: 'white', fontSize: 16, fontWeight: '600' },
-  buttonSmall: { flexShrink: 0, backgroundColor: '#FF3B30', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 },
-  buttonExport: { flexShrink: 0, backgroundColor: '#007AFF', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 },
-  buttonImport: { flexShrink: 0, backgroundColor: '#34C759', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 },
+  buttonSmall: { height: 42, flexShrink: 0, backgroundColor: '#FF3B30', paddingHorizontal: 10, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
+  buttonExport: { height: 42, flexShrink: 0, backgroundColor: '#007AFF', paddingHorizontal: 10, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
+  buttonImport: { height: 42, flexShrink: 0, backgroundColor: '#34C759', paddingHorizontal: 10, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
   buttonSmallText: { color: 'white', fontSize: 12, fontWeight: '600' },
   helpText: { color: '#687076', fontSize: 13, lineHeight: 18, marginBottom: 12 },
   statusText: { fontSize: 14, color: '#22C55E', marginBottom: 12, fontWeight: '500' },

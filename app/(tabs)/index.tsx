@@ -1019,7 +1019,16 @@ void loadImportedPlates();
       )}
 
       <View style={styles.overlayContainer} pointerEvents="box-none">
-        <View style={[styles.focusFrame, { borderColor: frameColor === 'blue' ? '#007AFF' : '#FF3B30' }]} pointerEvents="none" />
+        <View
+          style={[
+            styles.focusFrame,
+            {
+              borderColor: frameColor === 'blue' ? '#007AFF' : '#FF3B30',
+              opacity: frameColor === 'blue' ? 0.3 : 1,
+            },
+          ]}
+          pointerEvents="none"
+        />
 
         <View style={styles.statusBadges} pointerEvents="none">
           <View style={[styles.gpsBadge, { borderColor: gpsPresentation.color }]}>
