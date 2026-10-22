@@ -9,11 +9,21 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect } from 'expo-router';
 
 import { ScreenContainer } from '@/components/screen-container';
+import {
+  appendHomeColumnToCsv,
+  mergeImportedHomeRecords,
+  normalizeHomeRecordStates,
+  removeHomeRecordAt,
+  toggleHomeRecord,
+  type HomeRecordState,
+} from '@/utils/home-records';
+import { parseDetectionCsvRow } from '@/utils/detection-csv';
 
 const IMPORTED_PLATES_STORAGE_KEY = 'imported_plates';
 const ALL_DETECTIONS_STORAGE_KEY = 'all_scanned_plate_detections';
 const MAP_NEW_RECORD_KEYS_STORAGE_KEY = 'map_new_record_keys';
 const MANUAL_RECORD_KEYS_STORAGE_KEY = 'manual_detection_record_keys';
+const HOME_RECORDS_STORAGE_KEY = 'history_home_record_states';
 const PLATES_FILE_NAME = 'matriculas_detectadas.csv';
 
 const getPlatesFile = () => new File(Paths.document, PLATES_FILE_NAME);
@@ -30,6 +40,9 @@ interface ScannedPlate {
   latitude: string;
   longitude: string;
   manual?: boolean;
+  rowIndex: number;
+  recordId: string;
+  isHome: boolean;
 }
 
 function getManualRecordKey(record: Pick<ScannedPlate, 'plate' | 'date' | 'time'>): string {
@@ -167,6 +180,7 @@ export default function RegistrosScreen() {
     try {
       const platesFile = getPlatesFile();
       if (!(await platesFile.info()).exists) {
+        await AsyncStorage.removeItem(HOME_RECORDS_STORAGE_KEY);
         setScannedPlates([]);
         return;
       }
@@ -186,12 +200,25 @@ export default function RegistrosScreen() {
         console.warn('No se pudieron leer las marcas de registros manuales:', error);
       }
 
-      const platesData = (await platesFile.text())
+      const csvLines = (await platesFile.text())
+        .replace(/^\uFEFF/, '')
+        .replace(/\r\n/g, '\n')
         .split('\n')
-        .filter(Boolean)
-        .slice(1)
-        .map((line) => {
-          const match = line.match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"(?:,([^,]*))?$/);
+        .filter((line) => line.trim() !== '');
+      const dataLines = csvLines.slice(1);
+
+      let homeStates: HomeRecordState[] = [];
+      try {
+        const rawStates = await AsyncStorage.getItem(HOME_RECORDS_STORAGE_KEY);
+        homeStates = normalizeHomeRecordStates(rawStates, dataLines);
+        await AsyncStorage.setItem(HOME_RECORDS_STORAGE_KEY, JSON.stringify(homeStates));
+      } catch (error) {
+        console.warn('No se pudieron reconciliar las marcas de domicilio:', error);
+      }
+
+      const platesData = dataLines
+        .map((line, rowIndex) => {
+          const match = line.match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"(?:,([^,]*))?(?:,([^,]*))?$/);
           if (!match) return null;
 
           const [, rawPlate = '', rawDate = '', rawTime = '', rawCoordinates = ''] = match;
@@ -199,6 +226,7 @@ export default function RegistrosScreen() {
           const plate = rawPlate.trim().toUpperCase();
           const latitude = rawLatitude.trim();
           const longitude = rawLongitude.trim();
+          const homeState = homeStates[rowIndex];
 
           return plate && latitude && longitude
             ? {
@@ -207,6 +235,9 @@ export default function RegistrosScreen() {
                 time: rawTime.trim(),
                 latitude,
                 longitude,
+                rowIndex,
+                recordId: homeState?.id ?? `row-${rowIndex}`,
+                isHome: homeState?.isHome ?? false,
               }
             : null;
         })
@@ -406,6 +437,45 @@ export default function RegistrosScreen() {
     }
   };
 
+  const handleToggleHome = async (item: ScannedPlate) => {
+    try {
+      const file = getPlatesFile();
+      if (!(await file.info()).exists) {
+        Alert.alert('Domicilio', 'No se encontró el archivo de registros.');
+        return;
+      }
+
+      const lines = (await file.text())
+        .replace(/^\uFEFF/, '')
+        .replace(/\r\n/g, '\n')
+        .split('\n')
+        .filter((line) => line.trim() !== '');
+      const rows = lines.slice(1);
+      const line = rows[item.rowIndex];
+      const match = line?.match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"/);
+
+      if (
+        !match ||
+        match[1].trim().replace(/"/g, '').toUpperCase() !== item.plate ||
+        match[2].trim().replace(/"/g, '') !== item.date ||
+        match[3].trim().replace(/"/g, '') !== item.time
+      ) {
+        Alert.alert('Domicilio', 'El registro ha cambiado. Recarga el historial e inténtalo de nuevo.');
+        await loadScannedPlates();
+        return;
+      }
+
+      const rawStates = await AsyncStorage.getItem(HOME_RECORDS_STORAGE_KEY);
+      const states = normalizeHomeRecordStates(rawStates, rows);
+      const next = toggleHomeRecord(states, item.rowIndex);
+      await AsyncStorage.setItem(HOME_RECORDS_STORAGE_KEY, JSON.stringify(next));
+      await loadScannedPlates();
+    } catch (error) {
+      console.error('Error al actualizar domicilio:', error);
+      Alert.alert('Domicilio', 'No se pudo actualizar la marca de domicilio.');
+    }
+  };
+
   const openPlateLocation = async (plate: ScannedPlate) => {
     try {
       const plateLabel = plate.plate || 'Vehículo';
@@ -519,14 +589,21 @@ export default function RegistrosScreen() {
         .filter((line) => line.trim() !== '');
 
       const firstRowIsHeader = lines[0]?.toUpperCase().includes('MATR') ?? false;
-      const importedRows: string[] = [];
+      const importedRows: Array<{ row: string; isHome: boolean; plate: string }> = [];
 
       for (let i = firstRowIsHeader ? 1 : 0; i < lines.length; i += 1) {
-        const match = lines[i].match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"(?:,([^,]*))?$/);
+        const parsedRow = parseDetectionCsvRow(lines[i]);
 
-        if (!match) continue;
+        if (!parsedRow) continue;
 
-        const [, rawPlate = '', rawDate = '', rawTime = '', rawCoordinates = '', rawPlace = 'OK'] = match;
+        const {
+          rawPlate,
+          rawDate,
+          rawTime,
+          rawCoordinates,
+          rawPlace,
+          rawHome,
+        } = parsedRow;
         const plate = rawPlate.trim().replace(/"/g, '').toUpperCase();
         const date = rawDate.trim().replace(/"/g, '');
         const time = rawTime.trim().replace(/"/g, '');
@@ -547,9 +624,11 @@ export default function RegistrosScreen() {
 
         const place = rawPlace.trim().replace(/"/g, '') || 'OK';
 
-        importedRows.push(
-          `${plate},${date},${time},"${latitude},${longitude}",${place}`,
-        );
+        importedRows.push({
+          row: `${plate},${date},${time},"${latitude},${longitude}",${place}`,
+          isHome: rawHome.trim().replace(/"/g, '').toUpperCase() === 'SI',
+          plate,
+        });
       }
 
       if (importedRows.length === 0) {
@@ -580,39 +659,23 @@ export default function RegistrosScreen() {
       const header = existingLines[0] ?? 'MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD,LUGAR';
       const existingRows = existingLines.slice(1);
 
-      const getDetectionKey = (row: string) => {
-        const parts = row.split(',');
-        if (parts.length < 3) {
-          return row;
-        }
+      const rawHomeStates = await AsyncStorage.getItem(HOME_RECORDS_STORAGE_KEY);
+      const merged = mergeImportedHomeRecords(
+        existingRows,
+        importedRows,
+        rawHomeStates,
+      );
 
-        return [
-          parts[0].trim().toUpperCase(),
-          parts[1].trim(),
-          parts[2].trim(),
-        ].join('|');
-      };
+      await platesFile.write(`${[header, ...merged.rows].join('\n')}\n`);
 
-      const existingSet = new Set(existingRows.map(getDetectionKey));
-      const newlyImportedKeys: string[] = [];
-      let importedCount = 0;
-      let duplicateCount = 0;
+      await AsyncStorage.setItem(
+        HOME_RECORDS_STORAGE_KEY,
+        JSON.stringify(merged.states),
+      );
 
-      for (const row of importedRows) {
-        const detectionKey = getDetectionKey(row);
-
-        if (existingSet.has(detectionKey)) {
-          duplicateCount += 1;
-          continue;
-        }
-
-        existingSet.add(detectionKey);
-        existingRows.push(row);
-        newlyImportedKeys.push(detectionKey);
-        importedCount += 1;
-      }
-
-      await platesFile.write(`${[header, ...existingRows].join('\n')}\n`);
+      const newlyImportedKeys = merged.newlyImportedKeys;
+      const importedCount = merged.importedCount;
+      const duplicateCount = merged.duplicateCount;
 
       if (newlyImportedKeys.length > 0) {
         try {
@@ -721,6 +784,7 @@ export default function RegistrosScreen() {
 
           await AsyncStorage.removeItem(ALL_DETECTIONS_STORAGE_KEY);
           await AsyncStorage.removeItem(MANUAL_RECORD_KEYS_STORAGE_KEY);
+          await AsyncStorage.removeItem(HOME_RECORDS_STORAGE_KEY);
           setScannedPlates([]);
           Alert.alert('Completado', 'Registros OCR eliminados.');
         },
@@ -758,6 +822,8 @@ export default function RegistrosScreen() {
 
               const header = lines[0] ?? '';
               const dataLines = lines.slice(1).filter((line) => line.trim() !== '');
+              const rawHomeStates = await AsyncStorage.getItem(HOME_RECORDS_STORAGE_KEY);
+              const homeStatesBeforeDelete = normalizeHomeRecordStates(rawHomeStates, dataLines);
 
               const targetIndex = dataLines.findIndex((line) => {
                 const match = line.match(/^([^,]*),([^,]*),([^,]*),"([^"]*)"(?:,([^,]*))?$/);
@@ -895,6 +961,17 @@ export default function RegistrosScreen() {
                 );
               }
 
+              try {
+                const remainingStates = removeHomeRecordAt(homeStatesBeforeDelete, targetIndex);
+                if (dataLines.length === 0) {
+                  await AsyncStorage.removeItem(HOME_RECORDS_STORAGE_KEY);
+                } else {
+                  await AsyncStorage.setItem(HOME_RECORDS_STORAGE_KEY, JSON.stringify(remainingStates));
+                }
+              } catch (error) {
+                console.warn('No se pudieron actualizar las marcas de domicilio tras borrar:', error);
+              }
+
               // --------------------------------------------------------
               // La limpieza de AsyncStorage es secundaria. Si falla, el
               // registro del CSV ya se ha eliminado y no se revierte.
@@ -980,10 +1057,17 @@ export default function RegistrosScreen() {
       }
 
       const content = await platesFile.text();
-      if (content.split('\n').filter((line) => line.trim() !== '').length <= 1) {
+      const exportLines = content.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
+        .split('\n').filter((line) => line.trim() !== '');
+      if (exportLines.length <= 1) {
         Alert.alert('Exportar registros', 'No hay registros para exportar.');
         return;
       }
+      const exportStates = normalizeHomeRecordStates(
+        await AsyncStorage.getItem(HOME_RECORDS_STORAGE_KEY),
+        exportLines.slice(1),
+      );
+      const exportContent = appendHomeColumnToCsv(content, exportStates);
 
       if (!(await Sharing.isAvailableAsync())) {
         Alert.alert('Exportar registros', 'La función de compartir no está disponible en este dispositivo.');
@@ -1001,7 +1085,7 @@ export default function RegistrosScreen() {
         `matriculas_detectadas_${timestamp}.csv`,
       );
 
-      await exportFile.write(content);
+      await exportFile.write(exportContent);
 
       await Sharing.shareAsync(exportFile.uri, {
         dialogTitle: 'Exportar registros',
@@ -1075,14 +1159,32 @@ export default function RegistrosScreen() {
                     </TouchableOpacity>
                     <Text style={styles.plateSubText}>{item.date} {item.time}</Text>
                   </View>
-                  <TouchableOpacity
-                    onPress={() => handleDeleteOCRRecord(item)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Eliminar registro ${item.plate}`}
-                    hitSlop={8}
-                  >
-                    <MaterialIcons name="close" size={22} color="#FF3B30" />
-                  </TouchableOpacity>
+                  <View style={styles.plateActions}>
+                    <TouchableOpacity
+                      style={styles.homeButton}
+                      onPress={() => void handleToggleHome(item)}
+                      accessibilityRole="button"
+                      accessibilityLabel={item.isHome
+                        ? `Quitar domicilio de ${item.plate}`
+                        : `Marcar ${item.plate} como domicilio`}
+                      hitSlop={5}
+                    >
+                      <MaterialIcons
+                        name="home"
+                        size={25}
+                        color={item.isHome ? '#007AFF' : '#C7C7CC'}
+                      />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.deleteButton}
+                      onPress={() => handleDeleteOCRRecord(item)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Eliminar registro ${item.plate}`}
+                      hitSlop={5}
+                    >
+                      <MaterialIcons name="close" size={22} color="#FF3B30" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
             />
@@ -1212,6 +1314,9 @@ const styles = StyleSheet.create({
   helpText: { color: '#687076', fontSize: 13, lineHeight: 18, marginBottom: 12 },
   statusText: { fontSize: 14, color: '#22C55E', marginBottom: 12, fontWeight: '500' },
   plateItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F5F5F5', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 8, marginBottom: 8 },
+  plateActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  homeButton: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
+  deleteButton: { width: 30, height: 38, alignItems: 'center', justifyContent: 'center' },
   plateText: { fontSize: 16, fontWeight: 'bold', color: '#FF3B30' },
   plateSubText: { fontSize: 12, color: '#687076', marginTop: 2 },
   emptyText: { fontSize: 14, color: '#687076', fontStyle: 'italic', textAlign: 'center', marginVertical: 8 },
