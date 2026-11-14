@@ -1,10 +1,10 @@
 import "@/global.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack, useRootNavigationState } from "expo-router";
-import { useRouter } from "expo-router";
-import { ShareIntentProvider, useShareIntentContext } from "expo-share-intent";
+import { Stack } from "expo-router";
+
+import { ShareIntentProvider } from "expo-share-intent";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 import { Platform } from "react-native";
@@ -34,34 +34,6 @@ function RootLayoutContent() {
 
   const [insets, setInsets] = useState<EdgeInsets>(initialInsets);
   const [frame, setFrame] = useState<Rect>(initialFrame);
-  const router = useRouter();
-  const rootNavigationState = useRootNavigationState();
-  const { hasShareIntent, shareIntent } = useShareIntentContext();
-  const handledShareRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!hasShareIntent) {
-      handledShareRef.current = null;
-      return;
-    }
-
-    const sharedFile = shareIntent.files?.find((file) =>
-      file.fileName?.toLowerCase().endsWith(".csv") ||
-      file.mimeType?.toLowerCase().includes("csv")
-    );
-
-    if (!sharedFile) return;
-
-    // Esperar a que Expo Router monte el navegador raíz.
-    if (!rootNavigationState?.key) return;
-
-    const key = `${sharedFile.path}:${sharedFile.fileName}`;
-    if (handledShareRef.current === key) return;
-
-    handledShareRef.current = key;
-    router.replace("/(tabs)/registros" as never);
-  }, [hasShareIntent, shareIntent.files, router, rootNavigationState?.key]);
-
   // Initialize Manus runtime for cookie injection from parent container
   useEffect(() => {
     initManusRuntime();
