@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -7,6 +7,7 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect } from 'expo-router';
+import { useShareIntentContext } from 'expo-share-intent';
 
 import { ScreenContainer } from '@/components/screen-container';
 import {
@@ -159,6 +160,7 @@ export default function RegistrosScreen() {
   const [importedPlates, setImportedPlates] = useState<Record<string, ImportedPlateData>>({});
   const [scannedPlates, setScannedPlates] = useState<ScannedPlate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [lastImportNewCount, setLastImportNewCount] = useState<number | null>(null);
   const [showManualEntryModal, setShowManualEntryModal] = useState(false);
   const [manualPlate, setManualPlate] = useState('');
   const [manualCoordinates, setManualCoordinates] = useState('');
@@ -499,19 +501,26 @@ export default function RegistrosScreen() {
     }
   };
 
-  const handleImportCSV = async () => {
+  const handleImportCSV = async (sharedFile?: { uri: string; name: string }) => {
     try {
       setIsLoading(true);
-      const result = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel', 'text/plain'],
-        copyToCacheDirectory: true,
-      });
-      if (result.canceled || !result.assets?.length) return;
 
-      const selectedAsset = result.assets[0];
+      let selectedUri: string;
+
+      if (sharedFile) {
+        selectedUri = sharedFile.uri;
+      } else {
+        const result = await DocumentPicker.getDocumentAsync({
+          type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel', 'text/plain'],
+          copyToCacheDirectory: true,
+        });
+        if (result.canceled || !result.assets?.length) return;
+        selectedUri = result.assets[0].uri;
+      }
+
       const tempUri = `${FileSystem.cacheDirectory}temp_import.csv`;
       await FileSystem.deleteAsync(tempUri, { idempotent: true });
-      await FileSystem.copyAsync({ from: selectedAsset.uri, to: tempUri });
+      await FileSystem.copyAsync({ from: selectedUri, to: tempUri });
 
       const lines = (await FileSystem.readAsStringAsync(tempUri, { encoding: FileSystem.EncodingType.UTF8 }))
         .replace(/^\uFEFF/, '')
@@ -531,11 +540,19 @@ export default function RegistrosScreen() {
         };
       }
 
+      const previousImportedPlates = normalizeImportedPlates(
+        await AsyncStorage.getItem(IMPORTED_PLATES_STORAGE_KEY),
+      );
+      const newCount = Object.keys(newImportedPlates).filter(
+        (plate) => !(plate in previousImportedPlates),
+      ).length;
+
       await AsyncStorage.setItem(IMPORTED_PLATES_STORAGE_KEY, JSON.stringify(newImportedPlates));
       setImportedPlates(newImportedPlates);
+      setLastImportNewCount(newCount);
       await FileSystem.deleteAsync(tempUri, { idempotent: true });
       await loadScannedPlates();
-      Alert.alert('Éxito', `Se importaron ${Object.keys(newImportedPlates).length} matrículas correctamente.`);
+      Alert.alert('Éxito', `Se importaron ${Object.keys(newImportedPlates).length} matrículas correctamente (+${newCount} nuevas).`);
     } catch (error) {
       console.error('Error importing CSV:', error);
       Alert.alert('Error', 'No se pudo importar el archivo CSV.');
@@ -543,6 +560,66 @@ export default function RegistrosScreen() {
       setIsLoading(false);
     }
   };
+
+  const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
+  const processedListShareRef = useRef<string | null>(null);
+  const listImporterRef = useRef(handleImportCSV);
+  listImporterRef.current = handleImportCSV;
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasShareIntent) {
+        processedListShareRef.current = null;
+        return;
+      }
+
+      const sharedFile = shareIntent.files?.find((file) =>
+        file.fileName?.toLowerCase().endsWith(".csv") ||
+        file.mimeType?.toLowerCase().includes("csv")
+      );
+
+      if (!sharedFile) {
+        resetShareIntent();
+        return;
+      }
+
+      const key = `${sharedFile.path}:${sharedFile.fileName}`;
+      if (processedListShareRef.current === key) return;
+
+      processedListShareRef.current = key;
+
+      const importSharedList = () => {
+        void listImporterRef.current({
+          uri: sharedFile.path,
+          name: sharedFile.fileName,
+        }).finally(() => {
+          resetShareIntent();
+        });
+      };
+
+      if (Object.keys(importedPlates).length === 0) {
+        importSharedList();
+        return;
+      }
+
+      Alert.alert(
+        "CSV recibido",
+        "El archivo contiene una lista de matrículas. Si continúas, sustituirá la lista de cotejo actual. ¿Deseas reemplazarla?",
+        [
+          {
+            text: "Cancelar",
+            style: "cancel",
+            onPress: () => resetShareIntent(),
+          },
+          {
+            text: "Reemplazar",
+            onPress: importSharedList,
+          },
+        ],
+        { cancelable: false },
+      );
+    }, [hasShareIntent, shareIntent.files, resetShareIntent, importedPlates]),
+  );
 
   const handleImportDetectionRecords = () => {
     Alert.alert(
@@ -1103,12 +1180,15 @@ export default function RegistrosScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Registro de Matrículas (CSV)</Text>
           <Text style={styles.helpText}>Importa el registro con matrícula, fecha y hora. Las columnas de ubicación de origen se conservan fuera de esta vista.</Text>
-          <TouchableOpacity style={styles.button} onPress={handleImportCSV} disabled={isLoading}>
+          <TouchableOpacity style={styles.button} onPress={() => void handleImportCSV()} disabled={isLoading}>
             {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Importar Archivo CSV</Text>}
           </TouchableOpacity>
           {Object.keys(importedPlates).length > 0 && (
             <>
-              <Text style={styles.statusText}>Registros cargados: {Object.keys(importedPlates).length} matrículas</Text>
+              <Text style={styles.statusText}>
+                Registros cargados: {Object.keys(importedPlates).length} matrículas
+                {lastImportNewCount !== null ? ` (+${lastImportNewCount} nuevas)` : ""}
+              </Text>
               <TouchableOpacity style={[styles.button, styles.buttonDanger]} onPress={handleClearCSV}>
                 <Text style={styles.buttonText}>Limpiar Registros CSV</Text>
               </TouchableOpacity>

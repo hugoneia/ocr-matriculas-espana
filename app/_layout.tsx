@@ -1,8 +1,10 @@
 import "@/global.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
+import { useRouter } from "expo-router";
+import { ShareIntentProvider, useShareIntentContext } from "expo-share-intent";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 import { Platform } from "react-native";
@@ -26,12 +28,35 @@ export const unstable_settings = {
   anchor: "(tabs)",
 };
 
-export default function RootLayout() {
+function RootLayoutContent() {
   const initialInsets = initialWindowMetrics?.insets ?? DEFAULT_WEB_INSETS;
   const initialFrame = initialWindowMetrics?.frame ?? DEFAULT_WEB_FRAME;
 
   const [insets, setInsets] = useState<EdgeInsets>(initialInsets);
   const [frame, setFrame] = useState<Rect>(initialFrame);
+  const router = useRouter();
+  const { hasShareIntent, shareIntent } = useShareIntentContext();
+  const handledShareRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!hasShareIntent) {
+      handledShareRef.current = null;
+      return;
+    }
+
+    const sharedFile = shareIntent.files?.find((file) =>
+      file.fileName?.toLowerCase().endsWith(".csv") ||
+      file.mimeType?.toLowerCase().includes("csv")
+    );
+
+    if (!sharedFile) return;
+
+    const key = `${sharedFile.path}:${sharedFile.fileName}`;
+    if (handledShareRef.current === key) return;
+
+    handledShareRef.current = key;
+    router.replace("/(tabs)/registros" as never);
+  }, [hasShareIntent, shareIntent.files, router]);
 
   // Initialize Manus runtime for cookie injection from parent container
   useEffect(() => {
@@ -115,5 +140,14 @@ export default function RootLayout() {
     <ThemeProvider>
       <SafeAreaProvider initialMetrics={providerInitialMetrics}>{content}</SafeAreaProvider>
     </ThemeProvider>
+  );
+}
+
+
+export default function RootLayout() {
+  return (
+    <ShareIntentProvider options={{ resetOnBackground: false }}>
+      <RootLayoutContent />
+    </ShareIntentProvider>
   );
 }

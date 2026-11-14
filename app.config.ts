@@ -95,6 +95,18 @@ const config: ExpoConfig = {
   plugins: [
     "expo-router",
     [
+      "expo-share-intent",
+      {
+        androidIntentFilters: [
+          "text/csv",
+          "application/csv",
+          "application/vnd.ms-excel",
+          "text/comma-separated-values",
+        ],
+        disableIOS: true,
+      },
+    ],
+    [
       "expo-audio",
       {
         microphonePermission: "Allow $(PRODUCT_NAME) to access your microphone.",

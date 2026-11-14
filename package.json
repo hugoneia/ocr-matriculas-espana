@@ -52,6 +52,7 @@
     "expo-notifications": "~0.32.15",
     "expo-router": "~6.0.19",
     "expo-secure-store": "~15.0.8",
+    "expo-share-intent": "5.1.1",
     "expo-sharing": "~14.0.8",
     "expo-splash-screen": "~31.0.12",
     "expo-status-bar": "~3.0.9",
@@ -68,6 +69,7 @@
     "react-native": "0.81.5",
     "react-native-css-interop": "0.2.6",
     "react-native-gesture-handler": "~2.28.0",
+    "react-native-maps": "1.20.1",
     "react-native-reanimated": "~4.1.6",
     "react-native-safe-area-context": "~5.6.2",
     "react-native-screens": "~4.16.0",
@@ -77,8 +79,7 @@
     "react-native-worklets": "0.5.1",
     "superjson": "^1.13.3",
     "tailwind-merge": "^2.6.0",
-    "zod": "^4.2.1",
-    "react-native-maps": "1.20.1"
+    "zod": "^4.2.1"
   },
   "devDependencies": {
     "@babel/plugin-transform-react-jsx": "7.29.7",
