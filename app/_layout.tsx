@@ -1,6 +1,6 @@
 import "@/global.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack } from "expo-router";
+import { Stack, useRootNavigationState } from "expo-router";
 import { useRouter } from "expo-router";
 import { ShareIntentProvider, useShareIntentContext } from "expo-share-intent";
 import { StatusBar } from "expo-status-bar";
@@ -35,6 +35,7 @@ function RootLayoutContent() {
   const [insets, setInsets] = useState<EdgeInsets>(initialInsets);
   const [frame, setFrame] = useState<Rect>(initialFrame);
   const router = useRouter();
+  const rootNavigationState = useRootNavigationState();
   const { hasShareIntent, shareIntent } = useShareIntentContext();
   const handledShareRef = useRef<string | null>(null);
 
@@ -51,12 +52,15 @@ function RootLayoutContent() {
 
     if (!sharedFile) return;
 
+    // Esperar a que Expo Router monte el navegador raíz.
+    if (!rootNavigationState?.key) return;
+
     const key = `${sharedFile.path}:${sharedFile.fileName}`;
     if (handledShareRef.current === key) return;
 
     handledShareRef.current = key;
     router.replace("/(tabs)/registros" as never);
-  }, [hasShareIntent, shareIntent.files, router]);
+  }, [hasShareIntent, shareIntent.files, router, rootNavigationState?.key]);
 
   // Initialize Manus runtime for cookie injection from parent container
   useEffect(() => {
