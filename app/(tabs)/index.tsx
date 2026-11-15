@@ -799,6 +799,8 @@ console.error('Error during scan:', error);
   }, [detectionEvidence, evidenceImageLoaded]);
 
   useEffect(() => {
+    if (!isScreenFocused) return;
+
     let cancelled = false;
 
     void (async () => {
@@ -843,7 +845,7 @@ console.error('Error during scan:', error);
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isScreenFocused]);
 
   useEffect(() => {
     void restoreSavedZoom();

@@ -158,6 +158,7 @@ function normalizeImportedPlates(rawValue: string | null): Record<string, Import
 
 export default function RegistrosScreen() {
   const [importedPlates, setImportedPlates] = useState<Record<string, ImportedPlateData>>({});
+  const [isImportedPlatesLoaded, setIsImportedPlatesLoaded] = useState(false);
   const [scannedPlates, setScannedPlates] = useState<ScannedPlate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [lastImportNewCount, setLastImportNewCount] = useState<number | null>(null);
@@ -169,8 +170,22 @@ export default function RegistrosScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void loadImportedPlates();
+      let active = true;
+      setIsImportedPlatesLoaded(false);
+
+      void loadImportedPlates()
+        .then(() => {
+          if (active) setIsImportedPlatesLoaded(true);
+        })
+        .catch((error) => {
+          console.error('Error loading imported plates:', error);
+        });
+
       void loadScannedPlates();
+
+      return () => {
+        active = false;
+      };
     }, []),
   );
 
@@ -583,6 +598,8 @@ export default function RegistrosScreen() {
         return;
       }
 
+      if (!isImportedPlatesLoaded) return;
+
       const key = `${sharedFile.path}:${sharedFile.fileName}`;
       if (processedListShareRef.current === key) return;
 
@@ -618,7 +635,7 @@ export default function RegistrosScreen() {
         ],
         { cancelable: false },
       );
-    }, [hasShareIntent, shareIntent.files, resetShareIntent, importedPlates]),
+    }, [hasShareIntent, shareIntent.files, resetShareIntent, importedPlates, isImportedPlatesLoaded]),
   );
 
   const handleImportDetectionRecords = () => {
