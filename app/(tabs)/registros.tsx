@@ -1,13 +1,12 @@
-import React, { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useState } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect } from 'expo-router';
-import { useShareIntentContext } from 'expo-share-intent';
 
 import { ScreenContainer } from '@/components/screen-container';
 import {
@@ -19,8 +18,13 @@ import {
   type HomeRecordState,
 } from '@/utils/home-records';
 import { parseDetectionCsvRow } from '@/utils/detection-csv';
+import {
+  IMPORTED_PLATES_STORAGE_KEY,
+  normalizeImportedPlates,
+  importPlatesCSV,
+  type ImportedPlateData,
+} from '@/utils/import-plates-csv';
 
-const IMPORTED_PLATES_STORAGE_KEY = 'imported_plates';
 const ALL_DETECTIONS_STORAGE_KEY = 'all_scanned_plate_detections';
 const MAP_NEW_RECORD_KEYS_STORAGE_KEY = 'map_new_record_keys';
 const MANUAL_RECORD_KEYS_STORAGE_KEY = 'manual_detection_record_keys';
@@ -28,11 +32,6 @@ const HOME_RECORDS_STORAGE_KEY = 'history_home_record_states';
 const PLATES_FILE_NAME = 'matriculas_detectadas.csv';
 
 const getPlatesFile = () => new File(Paths.document, PLATES_FILE_NAME);
-
-interface ImportedPlateData {
-  fecha: string;
-  hora: string;
-}
 
 interface ScannedPlate {
   plate: string;
@@ -127,38 +126,8 @@ function parseSpanishDateTimeToTimestamp(date: string, time: string): number | n
   return parsed.getTime();
 }
 
-function normalizeImportedPlates(rawValue: string | null): Record<string, ImportedPlateData> {
-  if (!rawValue) return {};
-
-  try {
-    const parsed = JSON.parse(rawValue);
-    if (Array.isArray(parsed)) {
-      return parsed.reduce<Record<string, ImportedPlateData>>((store, plate) => {
-        if (typeof plate === 'string' && plate.trim()) store[plate.trim().toUpperCase()] = { fecha: '', hora: '' };
-        return store;
-      }, {});
-    }
-
-    if (parsed && typeof parsed === 'object') {
-      return Object.keys(parsed).reduce<Record<string, ImportedPlateData>>((store, plate) => {
-        const value = parsed[plate] ?? {};
-        store[plate.toUpperCase()] = {
-          fecha: typeof value.fecha === 'string' ? value.fecha : '',
-          hora: typeof value.hora === 'string' ? value.hora : '',
-        };
-        return store;
-      }, {});
-    }
-  } catch (error) {
-    console.error('Error parsing imported plates:', error);
-  }
-
-  return {};
-}
-
 export default function RegistrosScreen() {
   const [importedPlates, setImportedPlates] = useState<Record<string, ImportedPlateData>>({});
-  const [isImportedPlatesLoaded, setIsImportedPlatesLoaded] = useState(false);
   const [scannedPlates, setScannedPlates] = useState<ScannedPlate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [lastImportNewCount, setLastImportNewCount] = useState<number | null>(null);
@@ -170,22 +139,11 @@ export default function RegistrosScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      let active = true;
-      setIsImportedPlatesLoaded(false);
-
-      void loadImportedPlates()
-        .then(() => {
-          if (active) setIsImportedPlatesLoaded(true);
-        })
-        .catch((error) => {
-          console.error('Error loading imported plates:', error);
-        });
+      void loadImportedPlates().catch((error) => {
+        console.error('Error loading imported plates:', error);
+      });
 
       void loadScannedPlates();
-
-      return () => {
-        active = false;
-      };
     }, []),
   );
 
@@ -520,54 +478,17 @@ export default function RegistrosScreen() {
     try {
       setIsLoading(true);
 
-      let selectedUri: string;
+      const result = await importPlatesCSV(sharedFile);
+      if (!result) return;
 
-      if (sharedFile) {
-        selectedUri = sharedFile.uri;
-      } else {
-        const result = await DocumentPicker.getDocumentAsync({
-          type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel', 'text/plain'],
-          copyToCacheDirectory: true,
-        });
-        if (result.canceled || !result.assets?.length) return;
-        selectedUri = result.assets[0].uri;
-      }
-
-      const tempUri = `${FileSystem.cacheDirectory}temp_import.csv`;
-      await FileSystem.deleteAsync(tempUri, { idempotent: true });
-      await FileSystem.copyAsync({ from: selectedUri, to: tempUri });
-
-      const lines = (await FileSystem.readAsStringAsync(tempUri, { encoding: FileSystem.EncodingType.UTF8 }))
-        .replace(/^\uFEFF/, '')
-        .replace(/\r\n/g, '\n')
-        .split('\n')
-        .filter((line) => line.trim() !== '');
-      const newImportedPlates: Record<string, ImportedPlateData> = {};
-      const firstRowIsHeader = lines[0]?.toUpperCase().includes('MATR') ?? false;
-
-      for (let i = firstRowIsHeader ? 1 : 0; i < lines.length; i += 1) {
-        const columns = lines[i].split(',');
-        const plate = columns[0]?.replace(/"/g, '').trim().toUpperCase();
-        if (!plate) continue;
-        newImportedPlates[plate] = {
-          fecha: columns[1]?.replace(/"/g, '').trim() ?? '',
-          hora: columns[2]?.replace(/"/g, '').trim() ?? '',
-        };
-      }
-
-      const previousImportedPlates = normalizeImportedPlates(
-        await AsyncStorage.getItem(IMPORTED_PLATES_STORAGE_KEY),
-      );
-      const newCount = Object.keys(newImportedPlates).filter(
-        (plate) => !(plate in previousImportedPlates),
-      ).length;
-
-      await AsyncStorage.setItem(IMPORTED_PLATES_STORAGE_KEY, JSON.stringify(newImportedPlates));
-      setImportedPlates(newImportedPlates);
-      setLastImportNewCount(newCount);
-      await FileSystem.deleteAsync(tempUri, { idempotent: true });
+      setImportedPlates(result.newImportedPlates);
+      setLastImportNewCount(result.newCount);
       await loadScannedPlates();
-      Alert.alert('Éxito', `Se importaron ${Object.keys(newImportedPlates).length} matrículas correctamente (+${newCount} nuevas).`);
+
+      Alert.alert(
+        'Éxito',
+        `Se importaron ${Object.keys(result.newImportedPlates).length} matrículas correctamente (+${result.newCount} nuevas).`,
+      );
     } catch (error) {
       console.error('Error importing CSV:', error);
       Alert.alert('Error', 'No se pudo importar el archivo CSV.');
@@ -575,68 +496,6 @@ export default function RegistrosScreen() {
       setIsLoading(false);
     }
   };
-
-  const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
-  const processedListShareRef = useRef<string | null>(null);
-  const listImporterRef = useRef(handleImportCSV);
-  listImporterRef.current = handleImportCSV;
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!hasShareIntent) {
-        processedListShareRef.current = null;
-        return;
-      }
-
-      const sharedFile = shareIntent.files?.find((file) =>
-        file.fileName?.toLowerCase().endsWith(".csv") ||
-        file.mimeType?.toLowerCase().includes("csv")
-      );
-
-      if (!sharedFile) {
-        resetShareIntent();
-        return;
-      }
-
-      if (!isImportedPlatesLoaded) return;
-
-      const key = `${sharedFile.path}:${sharedFile.fileName}`;
-      if (processedListShareRef.current === key) return;
-
-      processedListShareRef.current = key;
-
-      const importSharedList = () => {
-        void listImporterRef.current({
-          uri: sharedFile.path,
-          name: sharedFile.fileName,
-        }).finally(() => {
-          resetShareIntent();
-        });
-      };
-
-      if (Object.keys(importedPlates).length === 0) {
-        importSharedList();
-        return;
-      }
-
-      Alert.alert(
-        "CSV recibido",
-        "El archivo contiene una lista de matrículas. Si continúas, sustituirá la lista de cotejo actual. ¿Deseas reemplazarla?",
-        [
-          {
-            text: "Cancelar",
-            style: "cancel",
-            onPress: () => resetShareIntent(),
-          },
-          {
-            text: "Reemplazar",
-            onPress: importSharedList,
-          },
-        ],
-        { cancelable: false },
-      );
-    }, [hasShareIntent, shareIntent.files, resetShareIntent, importedPlates, isImportedPlatesLoaded]),
-  );
 
   const handleImportDetectionRecords = () => {
     Alert.alert(

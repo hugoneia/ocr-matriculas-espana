@@ -1,6 +1,4 @@
-import { Tabs, usePathname, useRouter } from "expo-router";
-import { useEffect } from "react";
-import { useShareIntentContext } from "expo-share-intent";
+import { Tabs } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { HapticTab } from "@/components/haptic-tab";
@@ -13,30 +11,6 @@ export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const bottomPadding = Platform.OS === "web" ? 12 : Math.max(insets.bottom, 8);
   const tabBarHeight = 56 + bottomPadding;
-
-  const { isReady, hasShareIntent, shareIntent } = useShareIntentContext();
-  const router = useRouter();
-  const pathname = usePathname();
-
-  const hasSharedCsv = Boolean(
-    shareIntent.files?.some((file) =>
-      file.fileName?.toLowerCase().endsWith(".csv") ||
-      file.mimeType?.toLowerCase().includes("csv")
-    )
-  );
-
-  useEffect(() => {
-    if (
-      !isReady ||
-      !hasShareIntent ||
-      !hasSharedCsv ||
-      pathname.endsWith("/registros")
-    ) {
-      return;
-    }
-
-    router.replace("/(tabs)/registros");
-  }, [isReady, hasShareIntent, hasSharedCsv, pathname, router]);
 
   return (
     <Tabs
