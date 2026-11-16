@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, AppStateStatus, Image, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { Alert, AppState, AppStateStatus, DeviceEventEmitter, Image, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import { Camera, CameraView } from 'expo-camera';
 import { File, Paths } from 'expo-file-system';
@@ -153,10 +153,9 @@ function isFreshAccurateLocation(location: Location.LocationObject | null): loca
 }
 
 export default function HomeScreen() {
-  const [hasInitialPermissions, setHasInitialPermissions] = useState<boolean | null>(null);
-  const [initialPermissionError, setInitialPermissionError] = useState<string | null>(null);
   const [scannedPlates, setScannedPlates] = useState<ScannedPlateItem[]>([]);
   const [cameraReady, setCameraReady] = useState(false);
+  const [cameraEnabled, setCameraEnabled] = useState(false);
   const [frameColor, setFrameColor] = useState<'blue' | 'red'>('blue');
   const [importedPlates, setImportedPlates] = useState<ImportedPlateStore>({});
   const [notificationRules, setNotificationRules] = useState<Record<string, NotificationRule>>({});
@@ -179,6 +178,7 @@ export default function HomeScreen() {
   const evidenceHeight = Math.max(windowWidth, windowHeight);
 
   const cameraRef = useRef<CameraView>(null);
+  const cameraActivationInProgressRef = useRef(false);
   const evidenceViewRef = useRef<View>(null);
   const evidenceCaptureInProgressRef = useRef(false);
   const evidenceCaptureFrameRef = useRef<number | null>(null);
@@ -582,6 +582,18 @@ customToastTimeoutRef.current = setTimeout(() => setCustomToast(null), duration)
     }
   };
 
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener(
+      "imported-plates-updated",
+      () => {
+        void loadImportedPlates();
+        void loadScannedPlates();
+      },
+    );
+
+    return () => subscription.remove();
+  }, []);
+
   const clearScannedPlates = async () => {
     await AsyncStorage.setItem(ALL_DETECTIONS_STORAGE_KEY, JSON.stringify([]));
     setScannedPlates([]);
@@ -799,55 +811,6 @@ console.error('Error during scan:', error);
   }, [detectionEvidence, evidenceImageLoaded]);
 
   useEffect(() => {
-    if (!isScreenFocused) return;
-
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const cameraPermission = await Camera.requestCameraPermissionsAsync();
-
-        if (cameraPermission.status !== 'granted') {
-          if (!cancelled) {
-            setInitialPermissionError('Acceso a la cámara denegado.');
-            setHasInitialPermissions(false);
-          }
-          return;
-        }
-
-        let locationPermission = await Location.getForegroundPermissionsAsync();
-        if (locationPermission.status !== 'granted') {
-          locationPermission = await Location.requestForegroundPermissionsAsync();
-        }
-
-        if (locationPermission.status !== 'granted') {
-          if (!cancelled) {
-            setInitialPermissionError('Acceso a la ubicación denegado.');
-            setHasInitialPermissions(false);
-          }
-          return;
-        }
-
-        if (!cancelled) {
-          setHasInitialPermissions(true);
-          setInitialPermissionError(null);
-        }
-      } catch (error) {
-        console.error('Error solicitando permisos iniciales:', error);
-
-        if (!cancelled) {
-          setInitialPermissionError('No se pudieron solicitar los permisos iniciales.');
-          setHasInitialPermissions(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isScreenFocused]);
-
-  useEffect(() => {
     void restoreSavedZoom();
 
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
@@ -857,6 +820,9 @@ console.error('Error during scan:', error);
       if (wasActive && /inactive|background/.test(nextAppState)) {
         isAppActiveRef.current = false;
         setIsAppActive(false);
+        setCameraEnabled(false);
+        setCameraReady(false);
+        setIsTorchOn(false);
         void persistZoomIndex(zoomIndexRef.current);
         void pauseCameraPreview();
         stopLocationTracking();
@@ -904,19 +870,25 @@ console.error('Error during scan:', error);
     useCallback(() => {
       isScreenFocusedRef.current = true;
       setIsScreenFocused(true);
-void loadNotificationSettings();
-void loadOperationalSettings();
-void loadSaveDetectionImageSetting();
-void loadBypassRegistrationsSetting();
-void loadManualGpsSetting();
+      setCameraEnabled(false);
+      setCameraReady(false);
+      setIsTorchOn(false);
+
+      void loadNotificationSettings();
+      void loadOperationalSettings();
+      void loadSaveDetectionImageSetting();
+      void loadBypassRegistrationsSetting();
+      void loadManualGpsSetting();
       void loadRecentDetections();
-void loadImportedPlates();
+      void loadImportedPlates();
       void loadScannedPlates();
 
       return () => {
         isScreenFocusedRef.current = false;
         setIsScreenFocused(false);
+        setCameraEnabled(false);
         setCameraReady(false);
+        setIsTorchOn(false);
       };
     }, []),
   );
@@ -953,6 +925,42 @@ void loadImportedPlates();
     };
   }, [scanMode, isScreenFocused, isAppActive, cameraReady, scannerSettings.videoIntervalSeconds]);
 
+  const handleActivateCamera = async () => {
+    if (cameraActivationInProgressRef.current) return;
+    if (!isScreenFocusedRef.current || !isAppActiveRef.current) return;
+
+    cameraActivationInProgressRef.current = true;
+
+    try {
+      let permission = await Camera.getCameraPermissionsAsync();
+
+      if (permission.status !== 'granted') {
+        permission = await Camera.requestCameraPermissionsAsync();
+      }
+
+      if (permission.status !== 'granted') {
+        Alert.alert(
+          'Permiso de cámara',
+          'Es necesario permitir el acceso a la cámara para escanear matrículas.',
+        );
+        return;
+      }
+
+      if (isScreenFocusedRef.current && isAppActiveRef.current) {
+        setCameraReady(false);
+        setCameraEnabled(true);
+      }
+    } catch (error) {
+      console.error('Error activando la cámara:', error);
+      Alert.alert(
+        'Cámara',
+        'No se pudo activar la cámara. Comprueba los permisos del dispositivo.',
+      );
+    } finally {
+      cameraActivationInProgressRef.current = false;
+    }
+  };
+
   const handleZoomPreset = () => {
     const nextIndex = (zoomIndexRef.current + 1) % ZOOM_PRESETS.length;
     zoomIndexRef.current = nextIndex;
@@ -985,29 +993,11 @@ void loadImportedPlates();
     }
   };
 
-  if (hasInitialPermissions === null) {
-    return (
-      <ScreenContainer className="flex-1 items-center justify-center">
-        <Text>Solicitando permisos iniciales...</Text>
-      </ScreenContainer>
-    );
-  }
-
-  if (hasInitialPermissions === false) {
-    return (
-      <ScreenContainer className="flex-1 items-center justify-center p-6">
-        <Text className="text-center">
-          {initialPermissionError ?? 'Faltan permisos necesarios para iniciar la aplicación.'}
-        </Text>
-      </ScreenContainer>
-    );
-  }
-
   const gpsPresentation = getGpsPresentation();
 
   return (
     <ScreenContainer className="flex-1 p-0">
-      {isScreenFocused && (
+      {cameraEnabled && isScreenFocused && isAppActive && (
         <CameraView
           ref={cameraRef}
           style={StyleSheet.absoluteFillObject}
@@ -1112,6 +1102,27 @@ void loadImportedPlates();
           </View>
         </View>
       </View>
+
+      {isScreenFocused && isAppActive && !cameraEnabled && (
+        <TouchableOpacity
+          style={styles.cameraActivationOverlay}
+          activeOpacity={1}
+          onPress={() => void handleActivateCamera()}
+          accessibilityRole="button"
+          accessibilityLabel="Activar cámara"
+        >
+          <View style={styles.cameraActivationContent}>
+            <MaterialIcons
+              name="touch-app"
+              size={48}
+              color="#FFFFFF"
+            />
+            <Text style={styles.cameraActivationText}>
+              Pulsa la pantalla para activar la cámara
+            </Text>
+          </View>
+        </TouchableOpacity>
+      )}
 
       {detectionEvidence && (
         <View
@@ -1232,6 +1243,26 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0,0,0,0.85)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
+  },
+  cameraActivationOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 200,
+    elevation: 20,
+    backgroundColor: 'rgba(0,0,0,0.96)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cameraActivationContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  cameraActivationText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 14,
   },
   overlayContainer: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent' },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 20 },

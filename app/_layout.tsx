@@ -1,7 +1,7 @@
 import "@/global.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
-import { Alert } from "react-native";
+import { Alert, DeviceEventEmitter } from "react-native";
 import { useShareIntentContext } from "expo-share-intent";
 
 import { ShareIntentProvider } from "expo-share-intent";
@@ -34,7 +34,6 @@ export const unstable_settings = {
 function RootLayoutContent() {
   const { isReady, hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
   const processedListShareRef = useRef<string | null>(null);
-
   useEffect(() => {
     if (!hasShareIntent) {
       processedListShareRef.current = null;
@@ -83,6 +82,7 @@ function RootLayoutContent() {
                   });
 
                   if (result) {
+                    DeviceEventEmitter.emit("imported-plates-updated");
                     Alert.alert(
                       "Éxito",
                       `Se importaron ${Object.keys(result.newImportedPlates).length} matrículas correctamente (+${result.newCount} nuevas).`,

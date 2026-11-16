@@ -1,6 +1,6 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, DeviceEventEmitter, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { File, Paths } from 'expo-file-system';
@@ -146,6 +146,18 @@ export default function RegistrosScreen() {
       void loadScannedPlates();
     }, []),
   );
+
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener(
+      "imported-plates-updated",
+      () => {
+        void loadImportedPlates();
+        void loadScannedPlates();
+      },
+    );
+
+    return () => subscription.remove();
+  }, []);
 
   const loadImportedPlates = async () => {
     setImportedPlates(normalizeImportedPlates(await AsyncStorage.getItem(IMPORTED_PLATES_STORAGE_KEY)));
