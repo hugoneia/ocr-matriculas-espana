@@ -167,7 +167,6 @@ export default function RegistrosScreen() {
     try {
       const platesFile = getPlatesFile();
       if (!(await platesFile.info()).exists) {
-        await AsyncStorage.removeItem(HOME_RECORDS_STORAGE_KEY);
         setScannedPlates([]);
         return;
       }

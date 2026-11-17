@@ -4,7 +4,7 @@ import MapView, {
   type MarkerDragStartEndEvent,
   type Region,
 } from "react-native-maps";
-import * as FileSystem from "expo-file-system/legacy";
+import { File, Paths } from "expo-file-system";
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -45,7 +45,7 @@ type CoordinateGroup = {
   records: CsvRecord[];
 };
 
-const CSV_FILE = `${FileSystem.documentDirectory}matriculas_detectadas.csv`;
+const getCsvFile = () => new File(Paths.document, "matriculas_detectadas.csv");
 
 const CSV_HEADER = "MATRÍCULA,FECHA,HORA,LATITUD/LONGITUD,LUGAR";
 const NEW_RECORD_KEYS_STORAGE_KEY = "map_new_record_keys";
@@ -187,7 +187,8 @@ export default function MapaScreen() {
 
   const loadRecords = useCallback(async () => {
     try {
-      const info = await FileSystem.getInfoAsync(CSV_FILE);
+      const csvFile = getCsvFile();
+      const info = await csvFile.info();
 
       if (!info.exists) {
         setRecords([]);
@@ -195,7 +196,7 @@ export default function MapaScreen() {
         return;
       }
 
-      const content = await FileSystem.readAsStringAsync(CSV_FILE);
+      const content = await csvFile.text();
 
       const lines = content
         .split(/\r?\n/)
@@ -533,13 +534,14 @@ export default function MapaScreen() {
     setSaving(true);
 
     try {
-      const info = await FileSystem.getInfoAsync(CSV_FILE);
+      const csvFile = getCsvFile();
+      const info = await csvFile.info();
 
       if (!info.exists) {
         throw new Error("El archivo CSV ya no existe.");
       }
 
-      const content = await FileSystem.readAsStringAsync(CSV_FILE);
+      const content = await csvFile.text();
       const lines = content
         .split(/\r?\n/)
         .filter((line) => line.trim() !== "");
@@ -566,7 +568,7 @@ export default function MapaScreen() {
 
       const output = `${lines.join("\n")}\n`;
 
-      await FileSystem.writeAsStringAsync(CSV_FILE, output);
+      await csvFile.write(output);
 
       setSelectedRecord(null);
       setEditingCoordinate(null);
